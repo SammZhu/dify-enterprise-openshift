@@ -72,6 +72,44 @@ oc extract configmap/dify-values -n dify --to=- > dify-values.yaml
 helm install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml
 ```
 
+## Collaborating with the Dify team
+
+This environment is shared with Dify engineers, who install the product by hand;
+their working deployment is then captured back into this repo. That inverts the
+usual GitOps direction, so two things are set up for it.
+
+**`collaborationMode: true` (the default).** ArgoCD installs the dependencies
+once and then leaves the cluster alone — `selfHeal` and `prune` are both off.
+Without this, ArgoCD reverts hand-made changes a few minutes after they are
+applied, which is a miserable thing to debug. Flip it to `false` once the
+deployment is captured and Git is genuinely the source of truth again.
+
+**Division of labour.**
+
+| Who | What |
+|---|---|
+| This repo / GitOps | Namespace, SCC and RBAC, PostgreSQL (with the three databases), Redis, Qdrant, MinIO — the dependencies in place before anyone starts |
+| Dify engineers | The commercial `dify-enterprise` chart, License activation, and the values that actually work |
+| Capture | `scripts/capture-deployment.sh` turns their result back into repo content |
+
+**Ask them to install with Helm rather than applying manifests**, so that
+`helm get values --all` returns the complete merged configuration. That one
+artifact is most of what needs to come back here.
+
+```bash
+./scripts/capture-deployment.sh dify captured/
+```
+
+It records the merged Helm values, which SCC each pod actually got, whether the
+Ingress objects became edge-terminated Routes, the real image tags, the storage
+classes in use, and any non-Normal events. Credentials are redacted by
+`scripts/redact.py`, which keeps field names and replaces only values, and
+reports what it touched.
+
+**Read every captured file before committing — this repository is public.**
+Never commit the `dify-enterprise` chart itself, License material, or anything
+from Dify's deployment manual.
+
 ## What OpenShift changes
 
 Four things differ from Dify's documented happy path. All four are handled here.
@@ -120,6 +158,12 @@ and `litemaas.apiKey`.
   search fusion, or run a small CPU `bge-reranker-base` in-cluster.
 
 ## Open items
+
+- [ ] **Confirm this environment may be shared with a partner.** The Open
+      Environment sandbox is explicitly marked *internal use only, not to be
+      shared with customers or partners* — and Dify is a partner. Check the
+      sharing policy for whichever catalog item is actually used before giving
+      anyone access.
 
 - [ ] Can one LiteMaaS key serve both a chat model and the embedding model? RAG
       needs both online simultaneously. The catalog wording (`a selected model`,

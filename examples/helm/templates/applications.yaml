@@ -41,8 +41,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}
@@ -77,8 +79,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}
@@ -113,8 +117,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}
@@ -149,8 +155,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}
@@ -185,8 +193,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}
@@ -236,8 +246,10 @@ spec:
     namespace: {{ $common.ns }}
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      # collaborationMode keeps ArgoCD from reverting hand-made changes while
+      # Dify engineers are deploying interactively. See values.yaml.
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
 {{- end }}

@@ -22,6 +22,17 @@ argocd:
 # Namespace everything lands in
 namespace: dify
 
+# -----------------------------------------------------------------------------
+# Collaboration mode
+# -----------------------------------------------------------------------------
+# true  - ArgoCD installs the components once, then leaves the cluster alone
+#         (selfHeal and prune off). Use this while people are deploying and
+#         troubleshooting by hand: otherwise ArgoCD reverts their changes a few
+#         minutes later, which is maddening to debug.
+# false - Normal GitOps. Git is the source of truth and drift is corrected.
+#         Switch to this once the deployment is captured back into this repo.
+collaborationMode: true
+
 components:
 
   # --- OpenShift prerequisites: SCC bindings, ServiceAccount, RBAC ----------
