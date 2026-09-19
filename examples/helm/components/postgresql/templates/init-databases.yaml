@@ -1,0 +1,30 @@
+{{- if .Values.postgresql.enabled }}
+---
+# Dify Enterprise requires these databases to exist BEFORE first start
+# (enterprise-docs.dify.ai -> Advanced Configuration -> External Database):
+#   dify, enterprise, audit      <- must be created manually
+#   dify_plugin_daemon           <- created automatically by the plugin daemon
+#
+# The sclorg PostgreSQL image sources every *.sh in
+# /opt/app-root/src/postgresql-start/ once the server is up, which is the
+# supported extension point for this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dify-postgresql-init
+  namespace: {{ .Values.postgresql.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+data:
+  10-dify-databases.sh: |
+    #!/bin/bash
+    set -e
+    for db in dify enterprise audit; do
+      if psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
+        echo "database ${db} already exists"
+      else
+        echo "creating database ${db}"
+        createdb -O "${POSTGRESQL_USER}" "${db}"
+      fi
+    done
+{{- end }}

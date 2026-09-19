@@ -1,0 +1,243 @@
+# =============================================================================
+# App of Apps - one ArgoCD Application per component
+# =============================================================================
+# Sync waves order the rollout:
+#   0  prereqs    - SCC bindings / ServiceAccount / RBAC must exist first
+#   1  data tier  - PostgreSQL, Redis, Qdrant, MinIO
+#   2  dify       - Dify Enterprise itself
+# =============================================================================
+
+{{- $common := dict "repoURL" .Values.gitops.repoUrl "revision" .Values.gitops.revision "base" .Values.gitops.basePath "argons" .Values.argocd.namespace "project" .Values.argocd.project "ns" .Values.namespace }}
+
+{{- if .Values.components.prereqs.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-prereqs
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/dify-prereqs
+    helm:
+      valuesObject:
+        prereqs:
+          enabled: {{ .Values.components.prereqs.enabled }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+          scc: {{ .Values.components.prereqs.scc }}
+          privilegedForPluginBuild: {{ .Values.components.prereqs.privilegedForPluginBuild }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.postgresql.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-postgresql
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/postgresql
+    helm:
+      valuesObject:
+        postgresql:
+{{ toYaml .Values.components.postgresql | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.redis.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-redis
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/redis
+    helm:
+      valuesObject:
+        redis:
+{{ toYaml .Values.components.redis | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.qdrant.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-qdrant
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/qdrant
+    helm:
+      valuesObject:
+        qdrant:
+{{ toYaml .Values.components.qdrant | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.minio.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-minio
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/minio
+    helm:
+      valuesObject:
+        minio:
+{{ toYaml .Values.components.minio | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.dify.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-dify
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/dify
+    helm:
+      valuesObject:
+        dify:
+{{ toYaml .Values.components.dify | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+        deployer:
+          domain: {{ .Values.deployer.domain | quote }}
+          apiUrl: {{ .Values.deployer.apiUrl | quote }}
+        litemaas:
+          apiUrl: {{ .Values.litemaas.apiUrl | quote }}
+          apiKey: {{ .Values.litemaas.apiKey | quote }}
+          model: {{ .Values.litemaas.model | quote }}
+        postgresql:
+{{ toYaml .Values.components.postgresql | indent 10 }}
+        redis:
+{{ toYaml .Values.components.redis | indent 10 }}
+        qdrant:
+{{ toYaml .Values.components.qdrant | indent 10 }}
+        minio:
+{{ toYaml .Values.components.minio | indent 10 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}

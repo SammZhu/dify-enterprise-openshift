@@ -1,0 +1,54 @@
+{{- if .Values.prereqs.enabled }}
+---
+# Dify Enterprise docs, Resources Checklist:
+#   "If you are using a restricted environment, please make sure to allow the
+#    pods to run as root (like OpenShift)."
+# OpenShift ships a ClusterRole per SCC (system:openshift:scc:<name>); binding it
+# to a ServiceAccount is the supported way to grant that SCC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-scc-{{ .Values.prereqs.scc }}
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:{{ .Values.prereqs.scc }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.prereqs.serviceAccountName }}
+    namespace: {{ .Values.prereqs.namespace }}
+  # The Dify chart creates its own ServiceAccounts for some subcomponents and
+  # falls back to "default"; bind it too so nothing lands on restricted-v2.
+  - kind: ServiceAccount
+    name: default
+    namespace: {{ .Values.prereqs.namespace }}
+
+{{- if .Values.prereqs.privilegedForPluginBuild }}
+---
+# Plugin packages are built into container images IN-CLUSTER with Kaniko
+# (plugin_connector.shaderImage = gcr.io/kaniko-project/executor).
+# Kaniko needs more than anyuid on some clusters. Enable only if plugin
+# builds fail with permission errors - it is a real privilege escalation.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-scc-privileged
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.prereqs.serviceAccountName }}
+    namespace: {{ .Values.prereqs.namespace }}
+  - kind: ServiceAccount
+    name: default
+    namespace: {{ .Values.prereqs.namespace }}
+{{- end }}
+{{- end }}

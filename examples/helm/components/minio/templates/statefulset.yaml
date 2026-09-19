@@ -1,0 +1,97 @@
+{{- if .Values.minio.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dify-minio
+  namespace: {{ .Values.minio.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+type: Opaque
+stringData:
+  accessKey: {{ .Values.minio.accessKey | quote }}
+  secretKey: {{ .Values.minio.secretKey | quote }}
+  bucket: {{ .Values.minio.bucket | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-minio
+  namespace: {{ .Values.minio.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  selector:
+    app: dify-minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dify-minio
+  namespace: {{ .Values.minio.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  serviceName: dify-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dify-minio
+  template:
+    metadata:
+      labels:
+        app: dify-minio
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.minio.serviceAccountName }}
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+              name: s3
+            - containerPort: 9001
+              name: console
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: dify-minio, key: accessKey } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: dify-minio, key: secretKey } }
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+{{ toYaml .Values.minio.resources | indent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.minio.storage.storageClassName }}
+        storageClassName: {{ .Values.minio.storage.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.minio.storage.size }}
+{{- end }}

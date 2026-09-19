@@ -1,0 +1,147 @@
+{{- if .Values.dify.enabled }}
+{{- $ns := .Values.dify.namespace }}
+{{- /* Fail loudly rather than rendering dify-console.<empty> into every domain. */}}
+{{- $d := required "deployer.domain is empty - it must be injected by the Field Sourced Content workload (or passed with --set for local rendering)" .Values.deployer.domain }}
+{{- $h := .Values.dify.hosts }}
+{{- $console := printf "%s.%s" $h.consolePrefix $d }}
+{{- $api := printf "%s.%s" $h.apiPrefix $d }}
+{{- $app := printf "%s.%s" $h.appPrefix $d }}
+{{- $upload := printf "%s.%s" $h.uploadPrefix $d }}
+{{- $ent := printf "%s.%s" $h.enterprisePrefix $d }}
+{{- $trigger := printf "%s.%s" $h.triggerPrefix $d }}
+---
+# =============================================================================
+# Cluster-ready values for the COMMERCIAL dify-enterprise Helm chart.
+# =============================================================================
+# This ConfigMap is rendered against the live cluster (domain, in-cluster
+# service names, generated credentials). Extract it and feed it to helm:
+#
+#   oc extract configmap/dify-values -n {{ $ns }} --to=- > dify-values.yaml
+#   helm install dify <dify-chart-repo>/dify -n {{ $ns }} -f dify-values.yaml
+#
+# Every field below is taken from enterprise-docs.dify.ai for 3.9.x. Fields
+# marked VERIFY could not be confirmed from the public docs - check them against
+# `helm show values dify/dify` once you have chart access.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dify-values
+  namespace: {{ $ns }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+data:
+  dify-values.yaml: |
+    global:
+      # --- The 6 domains Dify Enterprise requires -------------------------
+      consoleApiDomain: "{{ $console }}"
+      consoleWebDomain: "{{ $console }}"
+      serviceApiDomain: "{{ $api }}"
+      appApiDomain: "{{ $app }}"
+      appWebDomain: "{{ $app }}"
+      filesDomain: "{{ $upload }}"
+      enterpriseDomain: "{{ $ent }}"
+      triggerDomain: "{{ $trigger }}"
+      useTLS: true
+
+      rag:
+        etlType: "dify"
+        keywordDataSourceType: "object_storage"
+        topKMaxValue: 10
+        indexingMaxSegmentationTokensLength: 4000
+
+    # --- Ingress: OpenShift router, NOT ingress-nginx ----------------------
+    # The docs assume ingress-nginx. On OpenShift the HAProxy router converts
+    # Ingress objects into Routes, so the class and annotations both change.
+    ingress:
+      enabled: true
+      className: "openshift-default"
+      annotations:
+        # SSE / streaming responses die on the default 30s router timeout.
+        haproxy.router.openshift.io/timeout: "600s"
+        # Audit logs need the real client IP.
+        haproxy.router.openshift.io/set-forwarded-headers: "append"
+      # No secretName: the router terminates with its default *.apps wildcard
+      # certificate, which already covers every host below.
+      # VERIFY on cluster - if the generated Routes come out insecure, create
+      # the 6 Routes manually as edge-terminated instead.
+      tls:
+        - hosts:
+            - "{{ $console }}"
+            - "{{ $api }}"
+            - "{{ $app }}"
+            - "{{ $upload }}"
+            - "{{ $ent }}"
+            - "{{ $trigger }}"
+
+    # --- External PostgreSQL ----------------------------------------------
+    # The dify / enterprise / audit databases are pre-created by the
+    # postgresql component; dify_plugin_daemon is created on first start.
+    externalDatabase:
+      enabled: true
+      engine: "postgres"
+      host: "dify-postgresql.{{ $ns }}.svc.cluster.local"
+      port: 5432
+      user: "{{ .Values.postgresql.username }}"
+      password: "{{ .Values.postgresql.password }}"
+      timezone: "UTC"
+      databases:
+        dify: "dify"
+        plugin_daemon: "dify_plugin_daemon"
+        enterprise: "enterprise"
+        audit: "audit"
+      dialectOptions:
+        postgres:
+          sslMode: "disable"
+          uriScheme: "postgresql"
+          extras: ""
+
+    # --- External Redis ----------------------------------------------------
+    externalRedis:
+      enabled: true
+      useSSL: false
+      host: "dify-redis.{{ $ns }}.svc.cluster.local"
+      port: 6379
+      username: ""
+      password: "{{ .Values.redis.password }}"
+      db: 0
+
+    # --- Vector database ---------------------------------------------------
+    # 3.9.x defaults to useExternal:true + externalType:qdrant. If endpoint and
+    # apiKey are left at their defaults the api/worker pods WILL fail to start.
+    vectorDB:
+      useExternal: true
+      externalType: "qdrant"
+    externalQdrant:
+      endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
+      apiKey: "{{ .Values.qdrant.apiKey }}"
+
+    # --- Persistent storage: S3 (MinIO in-cluster) -------------------------
+    persistence:
+      type: "s3"
+      s3:
+        endpoint: "http://dify-minio.{{ $ns }}.svc.cluster.local:9000"
+        accessKey: "{{ .Values.minio.accessKey }}"
+        secretKey: "{{ .Values.minio.secretKey }}"
+        region: "us-east-1"
+        bucketName: "{{ .Values.minio.bucket }}"
+        # VERIFY: MinIO needs path-style addressing. Confirm the accepted
+        # values for this field against `helm show values dify/dify`.
+        addressType: ""
+        useAwsManagedIam: false
+        useAwsS3: false
+
+    # --- Plugin image registry ---------------------------------------------
+    # Plugin packages are built into images IN-CLUSTER with Kaniko and pushed
+    # here. imageRepoSecret name is FIXED as "image-repo-secret" by Dify -
+    # create it with scripts/create-image-repo-secret.sh before installing.
+    plugin_connector:
+      imageRepoType: "{{ .Values.dify.pluginRegistry.imageRepoType }}"
+      imageRepoPrefix: "{{ .Values.dify.pluginRegistry.imageRepoPrefix }}"
+      imageRepoSecret: "image-repo-secret"
+      insecureImageRepo: {{ .Values.dify.pluginRegistry.insecureImageRepo }}
+      ecrRegion: "{{ .Values.dify.pluginRegistry.ecrRegion }}"
+
+    marketplace:
+      enabled: {{ .Values.dify.marketplaceEnabled }}
+{{- end }}

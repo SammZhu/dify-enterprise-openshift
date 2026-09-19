@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dify
+description: Dify Enterprise glue - renders a cluster-ready values.yaml for the commercial dify chart
+type: application
+version: 0.1.0
+appVersion: "3.9.8"

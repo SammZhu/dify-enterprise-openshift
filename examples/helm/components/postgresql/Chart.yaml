@@ -1,0 +1,5 @@
+apiVersion: v2
+name: postgresql
+description: PostgreSQL 16 for Dify Enterprise (Dify requires 14+)
+type: application
+version: 0.1.0

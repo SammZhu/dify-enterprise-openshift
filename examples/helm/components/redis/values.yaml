@@ -1,0 +1,12 @@
+redis:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  image: quay.io/sclorg/redis-7-c9s:latest
+  password: "ChangeMe-dify-demo"
+  storage:
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "1Gi" }

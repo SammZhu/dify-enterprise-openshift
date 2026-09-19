@@ -1,0 +1,15 @@
+minio:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  image: quay.io/minio/minio:latest
+  mcImage: quay.io/minio/mc:latest
+  bucket: dify
+  accessKey: "difyminio"
+  secretKey: "ChangeMe-dify-demo"
+  storage:
+    size: 50Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: "200m", memory: "512Mi" }
+    limits:   { cpu: "1",    memory: "2Gi" }

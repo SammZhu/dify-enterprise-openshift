@@ -1,0 +1,80 @@
+{{- if .Values.redis.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dify-redis
+  namespace: {{ .Values.redis.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+type: Opaque
+stringData:
+  password: {{ .Values.redis.password | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-redis
+  namespace: {{ .Values.redis.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  selector:
+    app: dify-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dify-redis
+  namespace: {{ .Values.redis.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  serviceName: dify-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dify-redis
+  template:
+    metadata:
+      labels:
+        app: dify-redis
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.redis.serviceAccountName }}
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+              name: redis
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: dify-redis, key: password } }
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+{{ toYaml .Values.redis.resources | indent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/redis/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.redis.storage.storageClassName }}
+        storageClassName: {{ .Values.redis.storage.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.storage.size }}
+{{- end }}

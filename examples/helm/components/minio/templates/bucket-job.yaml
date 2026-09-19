@@ -1,0 +1,44 @@
+{{- if .Values.minio.enabled }}
+---
+# Creates the Dify bucket after MinIO is up. Runs as an ArgoCD PostSync hook so
+# it is not re-applied on every sync.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dify-minio-create-bucket
+  namespace: {{ .Values.minio.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.minio.serviceAccountName }}
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: {{ .Values.minio.mcImage }}
+          env:
+            - name: ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: dify-minio, key: accessKey } }
+            - name: SECRET_KEY
+              valueFrom: { secretKeyRef: { name: dify-minio, key: secretKey } }
+            - name: BUCKET
+              valueFrom: { secretKeyRef: { name: dify-minio, key: bucket } }
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until mc alias set dify http://dify-minio:9000 "$ACCESS_KEY" "$SECRET_KEY"; do
+                echo "waiting for minio..."; sleep 5
+              done
+              mc mb --ignore-existing "dify/$BUCKET"
+              echo "bucket $BUCKET ready"
+{{- end }}

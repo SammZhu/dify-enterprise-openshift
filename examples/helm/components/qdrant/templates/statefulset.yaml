@@ -1,0 +1,94 @@
+{{- if .Values.qdrant.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dify-qdrant
+  namespace: {{ .Values.qdrant.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+type: Opaque
+stringData:
+  apiKey: {{ .Values.qdrant.apiKey | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-qdrant
+  namespace: {{ .Values.qdrant.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  selector:
+    app: dify-qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dify-qdrant
+  namespace: {{ .Values.qdrant.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  serviceName: dify-qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dify-qdrant
+  template:
+    metadata:
+      labels:
+        app: dify-qdrant
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.qdrant.serviceAccountName }}
+      containers:
+        - name: qdrant
+          image: {{ .Values.qdrant.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6333
+              name: http
+            - containerPort: 6334
+              name: grpc
+          env:
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom: { secretKeyRef: { name: dify-qdrant, key: apiKey } }
+            - name: QDRANT__TELEMETRY_DISABLED
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 6333
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+{{ toYaml .Values.qdrant.resources | indent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /qdrant/storage
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.qdrant.storage.storageClassName }}
+        storageClassName: {{ .Values.qdrant.storage.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.qdrant.storage.size }}
+{{- end }}

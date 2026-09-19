@@ -1,0 +1,87 @@
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dify-postgresql
+  namespace: {{ .Values.postgresql.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  selector:
+    app: dify-postgresql
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dify-postgresql
+  namespace: {{ .Values.postgresql.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  serviceName: dify-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dify-postgresql
+  template:
+    metadata:
+      labels:
+        app: dify-postgresql
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.postgresql.serviceAccountName }}
+      containers:
+        - name: postgresql
+          image: {{ .Values.postgresql.image }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRESQL_DATABASE
+              valueFrom: { secretKeyRef: { name: dify-postgresql, key: database } }
+            - name: POSTGRESQL_USER
+              valueFrom: { secretKeyRef: { name: dify-postgresql, key: username } }
+            - name: POSTGRESQL_PASSWORD
+              valueFrom: { secretKeyRef: { name: dify-postgresql, key: password } }
+            - name: POSTGRESQL_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: dify-postgresql, key: password } }
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["/usr/libexec/check-container", "--live"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+{{ toYaml .Values.postgresql.resources | indent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+            - name: init
+              mountPath: /opt/app-root/src/postgresql-start
+      volumes:
+        - name: init
+          configMap:
+            name: dify-postgresql-init
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgresql.storage.storageClassName }}
+        storageClassName: {{ .Values.postgresql.storage.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.storage.size }}
+{{- end }}

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: dify-enterprise-openshift
+description: App of Apps - Dify Enterprise on OpenShift, with its external dependencies
+type: application
+version: 0.1.0
+appVersion: "3.9.8"
+maintainers:
+  - name: Sam Zhu
+    email: zhuhe@msn.com

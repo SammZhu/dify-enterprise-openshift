@@ -1,0 +1,35 @@
+dify:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  chartAvailable: false
+  chartRepo: ""
+  chartName: dify
+  chartVersion: ""
+  hosts:
+    consolePrefix: dify-console
+    apiPrefix: dify-api
+    appPrefix: dify-app
+    uploadPrefix: dify-upload
+    enterprisePrefix: dify-enterprise
+    triggerPrefix: dify-trigger
+  pluginRegistry:
+    imageRepoType: docker
+    imageRepoPrefix: "image-registry.openshift-image-registry.svc:5000/dify"
+    insecureImageRepo: true
+    ecrRegion: ""
+  marketplaceEnabled: true
+
+deployer:
+  domain: ""
+  apiUrl: ""
+
+litemaas:
+  apiUrl: ""
+  apiKey: ""
+  model: ""
+
+postgresql: { username: dify, password: "", database: dify }
+redis: { password: "" }
+qdrant: { apiKey: "" }
+minio: { accessKey: "", secretKey: "", bucket: dify }

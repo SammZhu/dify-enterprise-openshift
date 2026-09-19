@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dify-prereqs
+description: OpenShift prerequisites for Dify Enterprise - SCC bindings, ServiceAccount, RBAC
+type: application
+version: 0.1.0
+appVersion: "3.9.8"

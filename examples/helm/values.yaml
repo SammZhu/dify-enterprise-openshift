@@ -1,0 +1,162 @@
+# =============================================================================
+# Dify Enterprise on OpenShift - App of Apps
+# =============================================================================
+# Target: Dify Enterprise v3.9.8 (Red Hat Partner Validated on OCP 4.20 / 4.21)
+# Catalog: https://catalog.redhat.com/en/software/container-stacks/detail/69fc3bfc14f7cd2916ffd595
+#
+# This chart deploys the EXTERNAL dependencies Dify Enterprise requires but does
+# not ship, plus the OpenShift-specific glue (SCC, RBAC, Routes). The Dify
+# Enterprise chart itself is a commercial artifact - see components.dify below.
+# =============================================================================
+
+gitops:
+  repoUrl: "https://github.com/SammZhu/dify-enterprise-openshift.git"
+  revision: "main"
+  basePath: "examples/helm"
+
+argocd:
+  namespace: openshift-gitops
+  # The field-content workload overrides this to "deployed"
+  project: default
+
+# Namespace everything lands in
+namespace: dify
+
+components:
+
+  # --- OpenShift prerequisites: SCC bindings, ServiceAccount, RBAC ----------
+  # Dify Enterprise docs: "If you are using a restricted environment, please make
+  # sure to allow the pods to run as root (like OpenShift)."
+  # License activation additionally requires a ServiceAccount + Role/RoleBinding.
+  prereqs:
+    enabled: true
+    serviceAccountName: dify
+    # anyuid is enough for the Dify workloads themselves.
+    scc: anyuid
+    # The plugin build path runs Kaniko in-cluster. If plugin builds fail with
+    # permission errors, flip this to true to also bind privileged.
+    privilegedForPluginBuild: false
+
+  # --- PostgreSQL 14+ (Dify requirement) -----------------------------------
+  postgresql:
+    enabled: true
+    image: quay.io/sclorg/postgresql-16-c9s:latest
+    database: dify
+    username: dify
+    # DEMO CREDENTIAL - this repo is public. Override per environment.
+    password: "ChangeMe-dify-demo"
+    storage:
+      size: 30Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits:   { cpu: "2",    memory: "4Gi" }
+
+  # --- Redis 6+ (Dify requirement) -----------------------------------------
+  redis:
+    enabled: true
+    image: quay.io/sclorg/redis-7-c9s:latest
+    # DEMO CREDENTIAL - override per environment.
+    password: "ChangeMe-dify-demo"
+    storage:
+      size: 5Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "100m", memory: "256Mi" }
+      limits:   { cpu: "500m", memory: "1Gi" }
+
+  # --- Qdrant (the vector DB Dify officially recommends) --------------------
+  qdrant:
+    enabled: true
+    image: docker.io/qdrant/qdrant:v1.12.4
+    # DEMO CREDENTIAL - override per environment.
+    apiKey: "ChangeMe-dify-demo"
+    storage:
+      size: 30Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "4",    memory: "8Gi" }
+
+  # --- MinIO: S3-compatible endpoint for Dify persistent storage -----------
+  # Swap for real AWS S3 (or ODF) by disabling this and pointing
+  # components.dify.storage.* at the external endpoint.
+  minio:
+    enabled: true
+    image: quay.io/minio/minio:latest
+    mcImage: quay.io/minio/mc:latest
+    bucket: dify
+    # DEMO CREDENTIALS - override per environment.
+    accessKey: "difyminio"
+    secretKey: "ChangeMe-dify-demo"
+    storage:
+      size: 50Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "200m", memory: "512Mi" }
+      limits:   { cpu: "1",    memory: "2Gi" }
+
+  # --- Dify Enterprise itself ----------------------------------------------
+  # PLACEHOLDER. The dify-enterprise Helm chart is a commercial artifact
+  # delivered with your Dify Enterprise contract (License + deployment manual).
+  # Until you have chart access this renders only the Secrets and Routes that
+  # the Dify chart will consume. See components/dify/values.yaml.
+  dify:
+    enabled: true
+    # Set to true once you have the chart repo credentials; see README.
+    chartAvailable: false
+    chartRepo: ""        # e.g. https://<dify-provided-helm-repo>
+    chartName: dify
+    chartVersion: ""
+
+    # The 6 hostnames Dify Enterprise requires. Rendered against deployer.domain.
+    hosts:
+      consolePrefix: dify-console
+      apiPrefix: dify-api
+      appPrefix: dify-app
+      uploadPrefix: dify-upload
+      enterprisePrefix: dify-enterprise
+      triggerPrefix: dify-trigger
+
+    # Plugin image registry. Dify builds plugin packages into images in-cluster
+    # (Kaniko) and pushes them here.
+    #   imageRepoType: docker -> Docker Hub or any Docker-compatible registry,
+    #                            including the OpenShift internal registry.
+    #   imageRepoType: ecr    -> AWS ECR (also set ecrRegion).
+    pluginRegistry:
+      imageRepoType: docker
+      imageRepoPrefix: "image-registry.openshift-image-registry.svc:5000/dify"
+      insecureImageRepo: true
+      ecrRegion: ""
+
+    # Disable the public marketplace for air-gapped / restricted clusters.
+    marketplaceEnabled: true
+
+# =============================================================================
+# Values injected by the field content workload (do not modify)
+# =============================================================================
+deployer:
+  domain: ""
+  apiUrl: ""
+
+guid: ""
+
+user:
+  count: 0
+
+# Base workloads selected at order time
+bases:
+  virt: false
+  rhoai: false
+  aap: false
+
+# LiteMaaS / MaaS API key, injected when enabled at order time.
+# Available models: gpt-oss-120b, gpt-oss-20b, llama-scout-17b,
+#                   nomic-embed-text-v1-5
+litemaas:
+  apiUrl: ""
+  apiKey: ""
+  model: ""
+
+fieldContent:
+  deploymentType: "helm"

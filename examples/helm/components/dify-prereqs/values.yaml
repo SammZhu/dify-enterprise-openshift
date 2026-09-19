@@ -1,0 +1,6 @@
+prereqs:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  scc: anyuid
+  privilegedForPluginBuild: false

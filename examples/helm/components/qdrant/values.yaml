@@ -1,0 +1,12 @@
+qdrant:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  image: docker.io/qdrant/qdrant:v1.12.4
+  apiKey: "ChangeMe-dify-demo"
+  storage:
+    size: 30Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: "500m", memory: "2Gi" }
+    limits:   { cpu: "4",    memory: "8Gi" }

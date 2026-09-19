@@ -1,0 +1,5 @@
+*.tgz
+charts/
+.DS_Store
+dify-values.local.yaml
+kubeconfig*

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: minio
+description: MinIO - S3-compatible object storage for Dify Enterprise persistent storage
+type: application
+version: 0.1.0

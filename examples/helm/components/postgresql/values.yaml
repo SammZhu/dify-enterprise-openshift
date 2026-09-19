@@ -1,0 +1,14 @@
+postgresql:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  image: quay.io/sclorg/postgresql-16-c9s:latest
+  database: dify
+  username: dify
+  password: "ChangeMe-dify-demo"
+  storage:
+    size: 30Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2",    memory: "4Gi" }
