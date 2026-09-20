@@ -39,6 +39,20 @@ act() { printf '  \033[36m[FIX ]\033[0m %s\n' "$*"; }
 
 oc whoami >/dev/null 2>&1 || { echo "Not logged in to a cluster. Run 'oc login' first."; exit 2; }
 rand() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
+# POST JSON from inside the cluster. The ollama image ships no curl, so borrow
+# one from a pod that has it; fall back to an ephemeral pod.
+post_in_cluster() {
+  local url="$1" data="$2" p
+  for p in dify-minio-0 dify-postgresql-0 dify-redis-0; do
+    if oc exec -n "$NS" "$p" -- sh -c 'command -v curl' >/dev/null 2>&1; then
+      oc exec -n "$NS" "$p" -- sh -c \
+        "curl -sS --max-time 60 '$url' -H 'Content-Type: application/json' -d '$data'" 2>/dev/null
+      return
+    fi
+  done
+  oc run "dify-curl-$$" --rm -i --restart=Never -n "$NS" --image=quay.io/curl/curl -- \
+    -sS --max-time 60 "$url" -H 'Content-Type: application/json' -d "$data" 2>/dev/null
+}
 ready(){ oc get pod "$1" -n "$NS" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null; }
 
 # =============================== repair actions ==============================
@@ -266,10 +280,8 @@ if oc get statefulset dify-embedder -n "$NS" >/dev/null 2>&1; then
   if [ "$(ready dify-embedder-0)" = "True" ]; then
     EMB_MODEL="$(oc get configmap dify-embedder -n "$NS" -o jsonpath='{.data.model}' 2>/dev/null)"
     # Behaviour, not status: ask it for an actual embedding and count the vector.
-    DIMS="$(oc exec -n "$NS" dify-embedder-0 -- sh -c \
-      "curl -sS --max-time 60 http://localhost:11434/v1/embeddings \
-        -H 'Content-Type: application/json' \
-        -d '{\"model\":\"$EMB_MODEL\",\"input\":\"preflight\"}'" 2>/dev/null \
+    DIMS="$(post_in_cluster "http://dify-embedder:11434/v1/embeddings" \
+      "{\"model\":\"$EMB_MODEL\",\"input\":\"preflight\"}" \
       | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["data"][0]["embedding"]))' 2>/dev/null)"
     if [ -n "$DIMS" ]; then
       g "In-cluster embedder '$EMB_MODEL' returns $DIMS-dimension vectors"

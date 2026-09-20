@@ -4,8 +4,8 @@ What actually happened bringing the dependency tier up on OpenShift 4.21.32
 (RHDP Field Sourced Content, CNV, GUID `dwm4j`). Written from live cluster
 behaviour, not from the docs.
 
-**Status: 30 checks passing, 1 failing.** The dependency tier is ready for the
-Dify Enterprise chart. The one failure is external — see *LiteMaaS* below.
+**Status: 32 checks passing, 0 failing.** The dependency tier is ready for the
+Dify Enterprise chart.
 
 ## Environment
 
@@ -102,15 +102,31 @@ models: gpt-oss-120b
 No `nomic-embed-text-v1-5`, so **RAG cannot work as ordered**. Chat, agents,
 tool calling and MCP are all fine.
 
-Two ways forward:
+**Resolved by running an embedder in-cluster** (`components.embedder`) rather
+than waiting on a second key. It serves `nomic-embed-text` through Ollama on
+CPU — the same model family LiteMaaS offers as `nomic-embed-text-v1-5`, both
+**768 dimensions**. Keeping them identical matters: switching to a LiteMaaS
+embedding key later needs no reindexing of the knowledge base.
 
-1. Request a second LiteMaaS key for `nomic-embed-text-v1-5`.
-2. Run a small embedder in-cluster (`bge-small`, `nomic-embed-text`) on CPU —
-   no GPU needed, and it removes the dependency on key scope entirely.
+Verified by asking it for a real vector and counting the components:
+
+```
+In-cluster embedder 'nomic-embed-text' returns 768-dimension vectors
+```
+
+Requesting a second LiteMaaS key remains a valid alternative; disable
+`components.embedder` if you get one.
 
 This was itself a near-miss in tooling: the preflight check looped over the
 model list looking for an embedder, found none, tested nothing, and reported the
-section all-green. An absent embedder now fails loudly.
+section all-green. An absent embedder now fails loudly — and only when nothing
+else provides one.
+
+### The ollama image has no curl
+
+Probing the embedder from inside its own pod fails on `command not found`.
+Preflight borrows curl from a pod that has it (MinIO does), falling back to an
+ephemeral pod. Worth knowing before writing any check against that container.
 
 ## Confirmed working
 
@@ -124,6 +140,8 @@ section all-green. An absent embedder now fails loudly.
 - Every `@@secret:` placeholder in the `dify-values` ConfigMap resolves.
 - `image-repo-secret` against the internal registry, created by
   `preflight-check.sh --fix`.
+- In-cluster embedding on CPU: model pull ~274MB, pod Ready in about 90 seconds
+  from a cold start, and the volume makes restarts free.
 
 ## Still unverified
 
