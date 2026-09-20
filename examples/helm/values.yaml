@@ -53,6 +53,11 @@ components:
       enabled: true
       prefix: user
       role: admin
+      allowRoleCreation: true
+    # Least-privilege SCC for the sandbox: SYS_CHROOT only, not privileged.
+    sandboxScc:
+      enabled: true
+      name: dify-sandbox
     # DifyPlugin CRs. The CRD is installed out of band; its resources are
     # Namespaced, so no cluster-level grant is involved.
     pluginCrdAccess:

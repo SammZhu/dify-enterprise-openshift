@@ -20,9 +20,17 @@ prereqs:
     prefix: user
     count: 0
     role: admin
+    # The Dify chart creates Roles with verbs:["*"], which RBAC's escalation
+    # check refuses unless the installer also holds "*". Namespace-scoped only.
+    allowRoleCreation: true
   # Access to the DifyPlugin CRs. The CRD is installed separately (it is not in
   # the certified image set) but its resources are Namespaced, so this needs no
   # cluster-level permission.
   pluginCrdAccess:
     enabled: true
     apiGroup: enterprise.dify.ai
+  # Dedicated least-privilege SCC for the sandbox (SYS_CHROOT + privilege
+  # escalation, nothing else). Without it the sandbox pod cannot be admitted.
+  sandboxScc:
+    enabled: true
+    name: dify-sandbox

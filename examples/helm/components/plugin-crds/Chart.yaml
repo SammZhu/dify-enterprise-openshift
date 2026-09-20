@@ -1,0 +1,18 @@
+apiVersion: v2
+appVersion: 1.13.3
+description: Dify Enterprise CustomResourceDefinitions
+home: https://dify.ai
+icon: https://avatars.githubusercontent.com/u/127165244
+keywords:
+- dify
+- crd
+maintainers:
+- email: yeuoly@dify.ai
+  name: Yeuoly
+- email: takatost@dify.ai
+  name: takatost
+name: dify-enterprise-crds
+sources:
+- https://github.com/langgenius/dify-helm
+type: application
+version: 3.9.8

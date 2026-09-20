@@ -17,14 +17,18 @@ roleRef:
   kind: ClusterRole
   name: system:openshift:scc:{{ .Values.prereqs.scc }}
 subjects:
-  - kind: ServiceAccount
-    name: {{ .Values.prereqs.serviceAccountName }}
-    namespace: {{ .Values.prereqs.namespace }}
-  # The Dify chart creates its own ServiceAccounts for some subcomponents and
-  # falls back to "default"; bind it too so nothing lands on restricted-v2.
-  - kind: ServiceAccount
-    name: default
-    namespace: {{ .Values.prereqs.namespace }}
+  # Bind to every ServiceAccount in the namespace, not just ours.
+  #
+  # The Dify chart creates its own ServiceAccounts, named after the Helm
+  # release - dify-dify-enterprise-plugin-connector-sa and friends. Binding
+  # only `dify` and `default` left those on restricted-v2, and pods that pin a
+  # UID were refused outright:
+  #   plugin-connector: runAsUser 1001 must be in [1000810000, 1000819999]
+  # Naming them individually would silently break the moment the release is
+  # named something else.
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:{{ .Values.prereqs.namespace }}
 
 {{- if .Values.prereqs.privilegedForPluginBuild }}
 ---

@@ -1,0 +1,72 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.sandboxScc.enabled }}
+---
+# A dedicated SCC for the Dify sandbox.
+#
+# The sandbox isolates user-supplied code with chroot, so it asks for:
+#   allowPrivilegeEscalation: true
+#   capabilities: add SYS_CHROOT, drop MKNOD
+#
+# anyuid refuses added capabilities and restricted-v2 refuses both, so the pod
+# could not be admitted at all. The obvious fix is `privileged`, which would
+# hand the sandbox far more than it needs - this grants exactly the two things
+# it asks for and nothing else. Notably it does NOT allow privileged
+# containers, host namespaces, host paths or host networking.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ .Values.prereqs.sandboxScc.name }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    kubernetes.io/description: >-
+      Least-privilege SCC for the Dify sandbox: SYS_CHROOT and privilege
+      escalation only. No privileged containers, no host access.
+allowPrivilegeEscalation: true
+allowPrivilegedContainer: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowedCapabilities:
+  - SYS_CHROOT
+defaultAddCapabilities: []
+requiredDropCapabilities:
+  - MKNOD
+runAsUser:
+  type: RunAsAny
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+readOnlyRootFilesystem: false
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+users: []
+groups: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-sandbox-scc
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:{{ .Values.prereqs.sandboxScc.name }}
+subjects:
+  # Scoped to the namespace's ServiceAccounts rather than one release-derived
+  # name, for the same reason as the anyuid binding.
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:{{ .Values.prereqs.namespace }}
+{{- end }}

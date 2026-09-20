@@ -43,7 +43,11 @@ spec:
             enabled: {{ .Values.components.prereqs.userAccess.enabled }}
             prefix: {{ .Values.components.prereqs.userAccess.prefix }}
             role: {{ .Values.components.prereqs.userAccess.role }}
+            allowRoleCreation: {{ .Values.components.prereqs.userAccess.allowRoleCreation }}
             count: {{ .Values.user.count }}
+          sandboxScc:
+            enabled: {{ .Values.components.prereqs.sandboxScc.enabled }}
+            name: {{ .Values.components.prereqs.sandboxScc.name }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ $common.ns }}

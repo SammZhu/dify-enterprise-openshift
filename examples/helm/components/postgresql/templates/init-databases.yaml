@@ -2,8 +2,15 @@
 ---
 # Dify Enterprise requires these databases to exist BEFORE first start
 # (enterprise-docs.dify.ai -> Advanced Configuration -> External Database):
-#   dify, enterprise, audit      <- must be created manually
-#   dify_plugin_daemon           <- created automatically by the plugin daemon
+#   dify, enterprise, audit      <- documented as manual
+#   dify_plugin_daemon           <- documented as automatic, but IS NOT.
+#
+# The plugin daemon tries to create that fourth database itself and dies:
+#   FATAL: database "dify_plugin_daemon" does not exist
+#   ERROR: permission denied to create database (SQLSTATE 42501)
+# The application user has rolcreatedb=false, which the docs do not mention.
+# Creating all four here avoids depending on a privilege we would rather not
+# grant.
 #
 # The sclorg PostgreSQL image sources every *.sh in
 # /opt/app-root/src/postgresql-start/ once the server is up, which is the
@@ -19,7 +26,7 @@ data:
   10-dify-databases.sh: |
     #!/bin/bash
     set -e
-    for db in dify enterprise audit; do
+    for db in dify enterprise audit dify_plugin_daemon; do
       if psql -tAc "SELECT 1 FROM pg_database WHERE datname='${db}'" | grep -q 1; then
         echo "database ${db} already exists"
       else
