@@ -4,8 +4,9 @@ What actually happened bringing the dependency tier up on OpenShift 4.21.32
 (RHDP Field Sourced Content, CNV, GUID `dwm4j`). Written from live cluster
 behaviour, not from the docs.
 
-**Status: 32 checks passing, 0 failing.** The dependency tier is ready for the
-Dify Enterprise chart.
+**Status: the product is installed.** 15 of 16 Dify components are running;
+the last one needs a `helm upgrade` re-run (see *Installing the product*).
+The dependency tier passes all 32 preflight checks.
 
 ## Environment
 
@@ -154,6 +155,100 @@ Probing the embedder from inside its own pod fails on `command not found`.
 Preflight borrows curl from a pod that has it (MinIO does), falling back to an
 ephemeral pod. Worth knowing before writing any check against that container.
 
+## Installing the product itself
+
+Six things broke on the first real install. None were environment faults, and
+none could have been found without putting the actual product on.
+
+### 1. `dify_plugin_daemon` does not create itself
+
+The docs say the plugin daemon creates its fourth database on first start. It
+cannot:
+
+```
+FATAL: database "dify_plugin_daemon" does not exist
+ERROR: permission denied to create database (SQLSTATE 42501)
+```
+
+The application user has `rolcreatedb=false`, which the docs do not mention.
+All four databases are now created up front rather than granting `CREATEDB`.
+
+### 2. The chart brings its own ServiceAccounts
+
+`anyuid` was bound to `dify` and `default`. The chart creates its own SAs named
+after the Helm release — `dify-dify-enterprise-plugin-connector-sa` and
+friends — so those pods landed on `restricted-v2` and were refused for pinning
+`runAsUser: 1001`. Binding to the namespace's ServiceAccount *group* fixes it
+and survives a different release name.
+
+### 3. The sandbox needs SYS_CHROOT, not privileged
+
+It isolates user code with chroot:
+
+```yaml
+allowPrivilegeEscalation: true
+capabilities: {add: [SYS_CHROOT], drop: [MKNOD]}
+```
+
+`anyuid` refuses added capabilities; `restricted-v2` refuses both. The reflex is
+to reach for `privileged`. A dedicated SCC granting exactly those two things
+works, and the pod now runs under `scc=dify-sandbox` with no privileged
+containers, host namespaces, host paths or host networking.
+
+**This is the answer worth taking to a production security review.**
+
+### 4. Installing the chart requires holding `*`
+
+```
+roles.rbac.authorization.k8s.io "dify-...-plugin-manager-role" is forbidden:
+user "user1" is attempting to grant RBAC permissions not currently held:
+{APIGroups:[""], Resources:["pods"], Verbs:["*"]} ...
+```
+
+The chart creates Roles with `verbs: ["*"]`, and RBAC refuses to let anyone
+grant permissions they do not hold. The built-in `admin` ClusterRole enumerates
+verbs rather than using `*`, so a namespace admin cannot install this chart.
+Namespace-scoped `*` for the installers resolves it; nothing cluster-wide.
+
+### 5. A custom SCC gets no ClusterRole of its own
+
+OpenShift auto-generates `system:openshift:scc:<name>` for **built-in** SCCs
+only. A RoleBinding naming that role for a custom SCC binds to nothing.
+
+The failure is silent in the worst way: the SCC never enters the candidate list,
+so the rejection lists `anyuid` and `restricted-v2` and **never mentions the
+custom SCC at all**. It reads exactly like the SCC was never created. A custom
+SCC needs its own ClusterRole with `use` on that `resourceName`.
+
+### 6. A completed Job with `Replace=true` freezes the whole sync
+
+`Replace=true` was added to avoid immutable-field errors when a Job spec
+changes. Replacing a *completed* Job fails for a different immutable reason —
+replace demands the selector Kubernetes generated:
+
+```
+Job.batch "dify-generate-secrets" is invalid: spec.selector: Required value
+```
+
+One failing resource fails the entire Application sync, so every other resource
+in that component silently stops being applied — while ArgoCD still reported
+`Synced/Healthy` at the Application level. The SCC fix above appeared not to
+work for this reason, not its own.
+
+Use `Force=true,Replace=true`: delete and recreate, safe because the Job is
+idempotent.
+
+### Re-running the install
+
+The first `helm install` failed at #4 and exited, so the Roles it had not yet
+created stay missing — `plugin-manager` cannot list pods and never becomes
+ready. With the permission fixed, a re-run creates them and repairs the release
+status:
+
+```bash
+helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml
+```
+
 ## Cluster-level permissions: what is actually required
 
 The Dify team asked for CRD management and SCC administration on their account.
@@ -273,11 +368,13 @@ manual step.
 
 These need the Dify Enterprise chart, which is not yet in hand:
 
-- [ ] Do Ingress objects become edge-terminated Routes on the router's wildcard
-      certificate, or must the 6 Routes be created by hand?
+- [x] **Ingress → Route: confirmed.** All six come out `edge/Redirect` on the
+      router's default wildcard certificate. `ingress.tls` with hosts and no
+      `secretName` is correct on OpenShift; no manual Routes needed.
 - [ ] `persistence.s3.addressType` — the value MinIO path-style addressing needs.
 - [ ] Does the in-cluster Kaniko plugin build work against the internal registry
-      with `insecureImageRepo: true`, and does it need more than `anyuid`?
+      with `insecureImageRepo: true`? (`plugin-connector` now runs under
+      `anyuid`; whether a *build* needs more is still untested.)
 - [ ] Is a 600s router timeout enough for streaming responses under load?
 - [ ] License activation on a short-lived environment — re-activatable after a
       rebuild?
