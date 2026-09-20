@@ -12,6 +12,13 @@ SENSITIVE = re.compile(
     r"|token|credential|privatekey|private_key|\bauth\b",
     re.IGNORECASE,
 )
+# Field names that merely *contain* a sensitive word while describing a size,
+# a limit or a duration - e.g. indexingMaxSegmentationTokensLength. Redacting
+# those loses information for no security gain.
+NOT_SENSITIVE = re.compile(
+    r"length|size|count|limit|max|min|timeout|ttl|duration|expiry|interval|retries",
+    re.IGNORECASE,
+)
 redacted = []
 
 def walk(node, path=""):
@@ -19,7 +26,8 @@ def walk(node, path=""):
         out = {}
         for k, v in node.items():
             p = f"{path}.{k}" if path else str(k)
-            if SENSITIVE.search(str(k)) and isinstance(v, (str, int, float)) and str(v):
+            if (SENSITIVE.search(str(k)) and not NOT_SENSITIVE.search(str(k))
+                    and isinstance(v, (str, int, float)) and str(v)):
                 out[k] = "REDACTED"
                 redacted.append(p)
             else:
