@@ -53,6 +53,11 @@ components:
       enabled: true
       prefix: user
       role: admin
+    # DifyPlugin CRs. The CRD is installed out of band; its resources are
+    # Namespaced, so no cluster-level grant is involved.
+    pluginCrdAccess:
+      enabled: true
+      apiGroup: enterprise.dify.ai
 
   # --- PostgreSQL 14+ (Dify requirement) -----------------------------------
   postgresql:

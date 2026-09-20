@@ -20,3 +20,9 @@ prereqs:
     prefix: user
     count: 0
     role: admin
+  # Access to the DifyPlugin CRs. The CRD is installed separately (it is not in
+  # the certified image set) but its resources are Namespaced, so this needs no
+  # cluster-level permission.
+  pluginCrdAccess:
+    enabled: true
+    apiGroup: enterprise.dify.ai

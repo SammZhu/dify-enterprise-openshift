@@ -1,0 +1,47 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.pluginCrdAccess.enabled }}
+---
+# Access to the DifyPlugin custom resources.
+#
+# The plugin system is CRD-driven. The CRD itself is installed separately - it
+# is NOT part of the Red Hat certified image set - and is cluster-scoped to
+# install, but the resources it defines are Namespaced. That is what makes this
+# grant possible without any cluster-level permission: once the CRD exists,
+# everything the plugin system does happens inside this namespace.
+#
+# Needed because a new CRD's resources are not covered by the built-in `admin`
+# ClusterRole - it aggregates, and nothing labels these in. Without this the
+# engineers can see the CRD but cannot create a single plugin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dify-plugin-crd-access
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+rules:
+  - apiGroups: ["{{ .Values.prereqs.pluginCrdAccess.apiGroup }}"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-plugin-crd-access
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dify-plugin-crd-access
+subjects:
+  # The controller that reconciles plugin resources into pods
+  - kind: ServiceAccount
+    name: {{ .Values.prereqs.serviceAccountName }}
+    namespace: {{ .Values.prereqs.namespace }}
+{{- range $i := until (int .Values.prereqs.userAccess.count) }}
+  - kind: User
+    apiGroup: rbac.authorization.k8s.io
+    name: {{ printf "%s%d" $.Values.prereqs.userAccess.prefix (add1 $i) }}
+{{- end }}
+{{- end }}

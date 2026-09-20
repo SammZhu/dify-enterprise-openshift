@@ -36,6 +36,9 @@ spec:
           serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
           scc: {{ .Values.components.prereqs.scc }}
           privilegedForPluginBuild: {{ .Values.components.prereqs.privilegedForPluginBuild }}
+          pluginCrdAccess:
+            enabled: {{ .Values.components.prereqs.pluginCrdAccess.enabled }}
+            apiGroup: {{ .Values.components.prereqs.pluginCrdAccess.apiGroup }}
           userAccess:
             enabled: {{ .Values.components.prereqs.userAccess.enabled }}
             prefix: {{ .Values.components.prereqs.userAccess.prefix }}
