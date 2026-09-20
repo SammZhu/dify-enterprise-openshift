@@ -36,6 +36,11 @@ spec:
           serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
           scc: {{ .Values.components.prereqs.scc }}
           privilegedForPluginBuild: {{ .Values.components.prereqs.privilegedForPluginBuild }}
+          userAccess:
+            enabled: {{ .Values.components.prereqs.userAccess.enabled }}
+            prefix: {{ .Values.components.prereqs.userAccess.prefix }}
+            role: {{ .Values.components.prereqs.userAccess.role }}
+            count: {{ .Values.user.count }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ $common.ns }}

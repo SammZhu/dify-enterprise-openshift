@@ -47,6 +47,12 @@ components:
     # The plugin build path runs Kaniko in-cluster. If plugin builds fail with
     # permission errors, flip this to true to also bind privileged.
     privilegedForPluginBuild: false
+    # Namespace access for the RHDP-provisioned users. count defaults to the
+    # injected user.count, so it matches whatever was ordered.
+    userAccess:
+      enabled: true
+      prefix: user
+      role: admin
 
   # --- PostgreSQL 14+ (Dify requirement) -----------------------------------
   postgresql:
