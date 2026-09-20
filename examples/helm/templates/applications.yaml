@@ -201,6 +201,42 @@ spec:
       - CreateNamespace=true
 {{- end }}
 
+{{- if .Values.components.embedder.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-embedder
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/embedder
+    helm:
+      valuesObject:
+        embedder:
+{{ toYaml .Values.components.embedder | indent 10 }}
+          namespace: {{ $common.ns }}
+          serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
 {{- if .Values.components.dify.enabled }}
 ---
 apiVersion: argoproj.io/v1alpha1

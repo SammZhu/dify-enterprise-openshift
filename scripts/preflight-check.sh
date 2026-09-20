@@ -260,6 +260,38 @@ else
   r "Secret image-repo-secret missing"; fixable "create it against the internal registry" fix_image_secret
 fi
 
+sec "Embedding model"
+EMB_OK=0
+if oc get statefulset dify-embedder -n "$NS" >/dev/null 2>&1; then
+  if [ "$(ready dify-embedder-0)" = "True" ]; then
+    EMB_MODEL="$(oc get configmap dify-embedder -n "$NS" -o jsonpath='{.data.model}' 2>/dev/null)"
+    # Behaviour, not status: ask it for an actual embedding and count the vector.
+    DIMS="$(oc exec -n "$NS" dify-embedder-0 -- sh -c \
+      "curl -sS --max-time 60 http://localhost:11434/v1/embeddings \
+        -H 'Content-Type: application/json' \
+        -d '{\"model\":\"$EMB_MODEL\",\"input\":\"preflight\"}'" 2>/dev/null \
+      | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["data"][0]["embedding"]))' 2>/dev/null)"
+    if [ -n "$DIMS" ]; then
+      g "In-cluster embedder '$EMB_MODEL' returns $DIMS-dimension vectors"
+      EMB_OK=1
+    else
+      r "In-cluster embedder pod is Ready but returned no embedding"
+      hint "oc logs -n $NS dify-embedder-0"
+    fi
+  else
+    PHASE="$(oc get pod dify-embedder-0 -n "$NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    if [ "$PHASE" = "Running" ]; then
+      y "Embedder running but not Ready yet - the model pull can take a few minutes"
+      hint "oc logs -n $NS dify-embedder-0 -f"
+    else
+      r "Embedder pod not Ready (phase: ${PHASE:-absent})"
+      hint "oc logs -n $NS dify-embedder-0"
+    fi
+  fi
+else
+  y "No in-cluster embedder deployed"
+fi
+
 sec "Models (LiteMaaS)"
 LM_URL="$(oc get configmap dify-litemaas -n "$NS" -o jsonpath='{.data.apiUrl}' 2>/dev/null)"
 LM_KEY="$(oc get secret dify-litemaas -n "$NS" -o jsonpath='{.data.apiKey}' 2>/dev/null | base64 -d 2>/dev/null)"
@@ -278,8 +310,12 @@ else
     # the loop below finds nothing to test, and the section reads all-green
     # while RAG is impossible.
     if ! echo "$MODELS" | grep -q 'embed'; then
-      r "  no embedding model available - RAG cannot work"
-      blocked "The key is scoped to the single model chosen at order time. Request a second key for nomic-embed-text-v1-5, or run an embedder in-cluster."
+      if [ "$EMB_OK" = "1" ]; then
+        y "  this key exposes no embedding model - RAG uses the in-cluster embedder instead"
+      else
+        r "  no embedding model available anywhere - RAG cannot work"
+        blocked "The key serves only the model chosen at order time. Request a second key for nomic-embed-text-v1-5, or enable components.embedder."
+      fi
     fi
     for m in $MODELS; do
       case "$m" in

@@ -1,0 +1,21 @@
+# In-cluster embedding server.
+#
+# Needed because a LiteMaaS key serves only the single model chosen at order
+# time, so an order for gpt-oss-120b has no embedder and RAG cannot work.
+#
+# Runs nomic-embed-text - the same model family LiteMaaS offers
+# (nomic-embed-text-v1-5), both 768 dimensions. Keeping them identical means
+# switching to a LiteMaaS embedding key later does not require reindexing.
+embedder:
+  enabled: true
+  namespace: dify
+  serviceAccountName: dify
+  image: docker.io/ollama/ollama:latest
+  model: nomic-embed-text
+  dimensions: 768
+  storage:
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: "500m", memory: "2Gi" }
+    limits:   { cpu: "4",    memory: "8Gi" }

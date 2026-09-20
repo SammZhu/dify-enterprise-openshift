@@ -100,6 +100,23 @@ components:
       requests: { cpu: "200m", memory: "512Mi" }
       limits:   { cpu: "1",    memory: "2Gi" }
 
+  # --- In-cluster embedding model -----------------------------------------
+  # A LiteMaaS key serves only the model chosen at order time, so an order for
+  # a chat model leaves RAG with no embedder. This fills that gap on CPU.
+  # Disable it if you obtain a LiteMaaS key for nomic-embed-text-v1-5 - both
+  # are 768 dimensions, so switching does not require reindexing.
+  embedder:
+    enabled: true
+    image: docker.io/ollama/ollama:latest
+    model: nomic-embed-text
+    dimensions: 768
+    storage:
+      size: 10Gi
+      storageClassName: ""
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "4",    memory: "8Gi" }
+
   # --- Dify Enterprise itself ----------------------------------------------
   # PLACEHOLDER. The dify-enterprise Helm chart is a commercial artifact
   # delivered with your Dify Enterprise contract (License + deployment manual).

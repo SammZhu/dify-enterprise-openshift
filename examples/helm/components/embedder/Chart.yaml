@@ -1,0 +1,5 @@
+apiVersion: v2
+name: embedder
+description: In-cluster CPU embedding model, OpenAI-compatible, for Dify RAG
+type: application
+version: 0.1.0
