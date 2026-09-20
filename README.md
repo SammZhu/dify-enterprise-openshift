@@ -75,7 +75,8 @@ helm install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml
 ### Checking readiness first
 
 ```bash
-./scripts/preflight-check.sh dify
+./scripts/preflight-check.sh dify          # read-only diagnosis
+./scripts/preflight-check.sh dify --fix    # repair what can be repaired, then re-check
 ```
 
 Verifies behaviour rather than object existence — a Running pod is not a working
@@ -88,6 +89,18 @@ until everything passes.
 The LiteMaaS check answers an open question directly: if chat succeeds and the
 embedding call does not, the key is scoped to a single model and a second key is
 needed before RAG can work.
+
+`--fix` creates what is safely creatable and genuinely missing — the credential
+secrets, the three databases, the MinIO bucket, `image-repo-secret` — and asks
+ArgoCD to re-sync when objects are absent because GitOps has not run. It then
+re-runs the checks, so the result reflects the repaired state rather than the
+repair attempt.
+
+It deliberately will not touch cluster-wide policy (a default StorageClass),
+rotate an existing credential, or restart a running workload. Anything it
+refuses to do is printed with the reason. Failures that need a human — an
+OpenShift version outside the certification matrix, PVCs stuck Pending, a
+LiteMaaS key scoped to one model — are called out as such rather than retried.
 
 ### Credentials
 
