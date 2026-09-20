@@ -52,6 +52,22 @@ volumes:
 users: []
 groups: []
 ---
+# OpenShift auto-generates a system:openshift:scc:<name> ClusterRole for its
+# BUILT-IN SCCs only. A custom SCC gets no such role, so a RoleBinding naming
+# one binds to nothing and fails silently - the SCC simply never appears among
+# the candidates, and the pod is rejected with no mention of it at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dify-sandbox-scc-use
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+rules:
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    resourceNames: ["{{ .Values.prereqs.sandboxScc.name }}"]
+    verbs: ["use"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -62,7 +78,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: system:openshift:scc:{{ .Values.prereqs.sandboxScc.name }}
+  name: dify-sandbox-scc-use
 subjects:
   # Scoped to the namespace's ServiceAccounts rather than one release-derived
   # name, for the same reason as the anyuid binding.
