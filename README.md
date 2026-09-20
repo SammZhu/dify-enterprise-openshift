@@ -72,6 +72,23 @@ are healthy:
 helm install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml
 ```
 
+### Checking readiness first
+
+```bash
+./scripts/preflight-check.sh dify
+```
+
+Verifies behaviour rather than object existence — a Running pod is not a working
+database. It queries PostgreSQL for the three databases Dify requires, pings
+Redis, asks MinIO for its bucket, confirms every `@@secret@@` placeholder
+resolves, and calls the LiteMaaS endpoint with both a chat model and the
+embedder. Each failure prints the command to run next. Exit code is non-zero
+until everything passes.
+
+The LiteMaaS check answers an open question directly: if chat succeeds and the
+embedding call does not, the key is scoped to a single model and a second key is
+needed before RAG can work.
+
 ### Credentials
 
 **No credential is stored in this repository, generated or otherwise.**

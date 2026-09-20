@@ -1,0 +1,41 @@
+{{- if and .Values.dify.enabled .Values.litemaas.apiUrl }}
+---
+# LiteMaaS connection details, for configuring Dify's model provider
+# (Model Provider -> OpenAI-API-compatible).
+#
+# Available models on this platform:
+#   gpt-oss-120b, gpt-oss-20b, llama-scout-17b  - chat, with tool calling
+#   nomic-embed-text-v1-5                       - embedding, 768 dims, 8192 ctx
+#
+# NOTE on the embedder: nomic-embed-text-v1-5 expects task prefixes -
+# "search_document: " when indexing, "search_query: " when retrieving. Dify's
+# OpenAI-compatible provider does not add them. Omitting them does not error;
+# retrieval quality just degrades in a way that is hard to trace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dify-litemaas
+  namespace: {{ .Values.dify.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+data:
+  apiUrl: {{ .Values.litemaas.apiUrl | quote }}
+  model: {{ .Values.litemaas.model | quote }}
+{{- if .Values.litemaas.apiKey }}
+---
+# The API key arrives as an injected Helm value, so it is already sitting in the
+# ArgoCD Application's valuesObject. Landing it in a Secret does not expose
+# anything new - it narrows access compared to leaving it only there, and gives
+# the tooling one predictable place to read it from. It is never in Git.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dify-litemaas
+  namespace: {{ .Values.dify.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+type: Opaque
+stringData:
+  apiKey: {{ .Values.litemaas.apiKey | quote }}
+{{- end }}
+{{- end }}
