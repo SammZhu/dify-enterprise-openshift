@@ -221,15 +221,38 @@ Re-apply this after any reinstall of that chart.
 ### Installing it (not in GitOps — commercial artifact)
 
 ```bash
-helm upgrade --install dify-enterprise-crds ./dify-enterprise-crds-3.9.8.tgz \
-  --namespace dify --wait
-oc annotate crd difyplugins.enterprise.dify.ai helm.sh/resource-policy=keep --overwrite
+./scripts/install-plugin-crds.sh ~/Downloads/dify-enterprise-crds-3.9.8.tgz dify
 ```
 
-`--create-namespace` from the vendor's instructions is dropped: `dify` already
-exists and is GitOps-managed. Inspect any replacement package before installing
-— this one was clean (one CRD, no ClusterRoles, no webhooks, no image pulls),
-but that is a thing to verify, not assume.
+The script does what the vendor's one-liner leaves out. It renders the package
+first and refuses to continue if it contains anything beyond CRDs — cluster
+RBAC, webhooks, workloads — because the next package will not necessarily look
+like this one, and cluster-scoped RBAC is precisely what was declined. It warns
+if a CRD is not `Namespaced`, since that would change the access model. It
+drops `--create-namespace` (the namespace exists and is GitOps-managed), applies
+`helm.sh/resource-policy=keep` to every CRD it installed, and finally prints the
+API group so it can be checked against
+`components.prereqs.pluginCrdAccess.apiGroup` — if a future package changes the
+group, the RBAC silently stops matching and nobody can touch the resources.
+
+Idempotent: re-running it upgrades the release and re-applies the annotation.
+
+**Why this is not in GitOps.** The package is a commercial artifact and this
+repository is public. `langgenius/dify-helm`, the source named in its
+Chart.yaml, is not a public repository either, so the CRD cannot simply be
+vendored in. The real fix is to have ArgoCD pull the chart from Dify's own Helm
+repository, with credentials held in an ArgoCD repo Secret rather than in Git —
+which is needed for the Dify chart itself anyway:
+
+```yaml
+source:
+  repoURL: <dify-helm-repo>
+  chart: dify-enterprise-crds
+  targetRevision: 3.9.8
+```
+
+Until that repository URL and credentials are available, this stays a scripted
+manual step.
 
 ## Confirmed working
 

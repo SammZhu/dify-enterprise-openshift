@@ -102,6 +102,20 @@ refuses to do is printed with the reason. Failures that need a human — an
 OpenShift version outside the certification matrix, PVCs stuck Pending, a
 LiteMaaS key scoped to one model — are called out as such rather than retried.
 
+### Plugin CRDs
+
+The plugin system is CRD-driven, and the CRD is **not** among the certified
+images — it ships as a separate commercial chart that cannot live in this public
+repository:
+
+```bash
+./scripts/install-plugin-crds.sh <dify-enterprise-crds-X.Y.Z.tgz> dify
+```
+
+Inspects the package before trusting it, installs it, protects the CRDs from
+Helm's cascade delete, and checks the API group against what the RBAC expects.
+Re-run it after an environment rebuild.
+
 ### Credentials
 
 **No credential is stored in this repository, generated or otherwise.**
