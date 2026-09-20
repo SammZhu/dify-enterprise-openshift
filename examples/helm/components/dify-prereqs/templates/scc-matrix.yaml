@@ -1,0 +1,48 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.sccMatrix.enabled }}
+---
+# =============================================================================
+# Per-component SCC assignment.
+# =============================================================================
+# Dify's own chart ships SCC templates requesting `privileged` for the sandbox.
+# It does not need it - the sandbox's own securityContext says
+# `privileged: false`. What it actually asks for is SYS_CHROOT plus privilege
+# escalation, and a dedicated SCC granting exactly that runs it fine.
+#
+# Measured on OpenShift 4.21, Dify Enterprise 3.9.8:
+#
+#   component            needs                       SCC
+#   -------------------  --------------------------  ------------------
+#   sandbox              SYS_CHROOT, escalation      dify-sandbox
+#   plugin-connector     runAsUser 1001 (non-root)   nonroot-v2
+#   plugin builder/run   root                        anyuid   (untested)
+#   everything else      root or namespace UID       anyuid / restricted-v2
+#
+# nonroot-v2 for plugin-connector is tighter than anyuid: it pins a non-root
+# UID outside the namespace range, which restricted-v2 rejects, but it never
+# needs to be root. anyuid would work and grant more than necessary.
+#
+# SCC selection is by priority, and anyuid (priority 10) outranks nonroot-v2.
+# Granting anyuid namespace-wide would therefore mask this, so the connector's
+# ServiceAccount is named explicitly here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-scc-nonroot-connector
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    kubernetes.io/description: >-
+      plugin-connector runs as UID 1001 and never needs root; nonroot-v2 is
+      the tightest SCC that admits it.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:nonroot-v2
+subjects:
+{{- range .Values.prereqs.sccMatrix.nonrootServiceAccounts }}
+  - kind: ServiceAccount
+    name: {{ . }}
+    namespace: {{ $.Values.prereqs.namespace }}
+{{- end }}
+{{- end }}

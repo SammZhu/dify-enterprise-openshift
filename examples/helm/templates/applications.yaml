@@ -48,6 +48,8 @@ spec:
           sandboxScc:
             enabled: {{ .Values.components.prereqs.sandboxScc.enabled }}
             name: {{ .Values.components.prereqs.sandboxScc.name }}
+          sccMatrix:
+{{ toYaml .Values.components.prereqs.sccMatrix | indent 12 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ $common.ns }}

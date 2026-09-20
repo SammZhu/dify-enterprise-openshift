@@ -34,3 +34,9 @@ prereqs:
   sandboxScc:
     enabled: true
     name: dify-sandbox
+  # Per-component SCC assignment beyond the namespace-wide anyuid baseline.
+  # ServiceAccount names are Helm-release derived: <release>-dify-enterprise-*
+  sccMatrix:
+    enabled: true
+    nonrootServiceAccounts:
+      - dify-dify-enterprise-plugin-connector-sa
