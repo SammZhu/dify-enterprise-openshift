@@ -1,15 +1,5 @@
 {{- if .Values.qdrant.enabled }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dify-qdrant
-  namespace: {{ .Values.qdrant.namespace }}
-  labels:
-    demo.redhat.com/application: "dify-enterprise"
-type: Opaque
-stringData:
-  apiKey: {{ .Values.qdrant.apiKey | quote }}
+
 ---
 apiVersion: v1
 kind: Service

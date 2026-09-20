@@ -1,15 +1,5 @@
 {{- if .Values.redis.enabled }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dify-redis
-  namespace: {{ .Values.redis.namespace }}
-  labels:
-    demo.redhat.com/application: "dify-enterprise"
-type: Opaque
-stringData:
-  password: {{ .Values.redis.password | quote }}
+
 ---
 apiVersion: v1
 kind: Service

@@ -1,9 +1,10 @@
+# Credentials live in cluster-generated secrets, never here.
+# See components/dify-prereqs/templates/generate-secrets-job.yaml
 redis:
   enabled: true
   namespace: dify
   serviceAccountName: dify
   image: quay.io/sclorg/redis-7-c9s:latest
-  password: "ChangeMe-dify-demo"
   storage:
     size: 5Gi
     storageClassName: ""

@@ -1,3 +1,5 @@
+# Credentials live in cluster-generated secrets, never here.
+# See components/dify-prereqs/templates/generate-secrets-job.yaml
 minio:
   enabled: true
   namespace: dify
@@ -5,8 +7,6 @@ minio:
   image: quay.io/minio/minio:latest
   mcImage: quay.io/minio/mc:latest
   bucket: dify
-  accessKey: "difyminio"
-  secretKey: "ChangeMe-dify-demo"
   storage:
     size: 50Gi
     storageClassName: ""

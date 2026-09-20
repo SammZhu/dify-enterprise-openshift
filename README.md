@@ -65,11 +65,32 @@ are healthy:
 # 1. Create the plugin registry secret (name is fixed by Dify)
 ./scripts/create-image-repo-secret.sh internal dify
 
-# 2. Pull the cluster-ready values
-oc extract configmap/dify-values -n dify --to=- > dify-values.yaml
+# 2. Resolve the cluster-ready values (writes live credentials - gitignored)
+./scripts/render-dify-values.sh dify > dify-values.yaml
 
 # 3. Install the commercial chart
 helm install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml
+```
+
+### Credentials
+
+**No credential is stored in this repository, generated or otherwise.**
+
+A PreSync job in `dify-prereqs` generates the PostgreSQL, Redis, Qdrant and
+MinIO credentials on the cluster and writes them into Secrets. It is idempotent:
+an existing Secret is left untouched, so re-syncing never rotates a password out
+from under a running database. To use your own values instead, create the
+Secrets before the first sync.
+
+The rendered `dify-values` ConfigMap holds **no credentials either** — a
+ConfigMap is plaintext in etcd and readable by anything with configmap access.
+It carries `@@secret:<name>/<key>@@` placeholders, which
+`render-dify-values.sh` resolves against the Secrets at install time. The
+resolved file is gitignored.
+
+```bash
+# read a generated credential when you need it
+oc get secret dify-postgresql -n dify -o jsonpath='{.data.password}' | base64 -d
 ```
 
 ## Collaborating with the Dify team
@@ -159,11 +180,6 @@ and `litemaas.apiKey`.
 
 ## Open items
 
-- [ ] **Confirm this environment may be shared with a partner.** The Open
-      Environment sandbox is explicitly marked *internal use only, not to be
-      shared with customers or partners* — and Dify is a partner. Check the
-      sharing policy for whichever catalog item is actually used before giving
-      anyone access.
 
 - [ ] Can one LiteMaaS key serve both a chat model and the embedding model? RAG
       needs both online simultaneously. The catalog wording (`a selected model`,

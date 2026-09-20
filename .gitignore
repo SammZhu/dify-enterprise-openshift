@@ -1,6 +1,8 @@
 *.tgz
 charts/
 .DS_Store
+# Output of scripts/render-dify-values.sh - contains resolved live credentials.
+dify-values.yaml
 dify-values.local.yaml
 kubeconfig*
 

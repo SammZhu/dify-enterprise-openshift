@@ -4,3 +4,11 @@ prereqs:
   serviceAccountName: dify
   scc: anyuid
   privilegedForPluginBuild: false
+  # Image used by the credential-generation job; needs `oc` on PATH.
+  cliImage: quay.io/openshift/origin-cli:latest
+  # Non-sensitive values baked into the generated secrets. Passwords, API keys
+  # and access keys are generated on the cluster - see generate-secrets-job.yaml.
+  secrets:
+    postgresqlDatabase: dify
+    postgresqlUsername: dify
+    minioBucket: dify

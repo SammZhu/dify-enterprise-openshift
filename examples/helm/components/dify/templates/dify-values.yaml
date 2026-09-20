@@ -16,8 +16,14 @@
 # This ConfigMap is rendered against the live cluster (domain, in-cluster
 # service names, generated credentials). Extract it and feed it to helm:
 #
-#   oc extract configmap/dify-values -n {{ $ns }} --to=- > dify-values.yaml
+#   ./scripts/render-dify-values.sh {{ $ns }} > dify-values.yaml   # gitignored
 #   helm install dify <dify-chart-repo>/dify -n {{ $ns }} -f dify-values.yaml
+#
+# This ConfigMap contains NO credentials. Every secret value is an
+# @@secret:<name>/<key>@@ placeholder that render-dify-values.sh resolves
+# against the cluster secrets at install time. A ConfigMap is plaintext in
+# etcd and readable by anything with configmap access, so credentials must
+# not live here.
 #
 # Every field below is taken from enterprise-docs.dify.ai for 3.9.x. Fields
 # marked VERIFY could not be confirmed from the public docs - check them against
@@ -82,8 +88,8 @@ data:
       engine: "postgres"
       host: "dify-postgresql.{{ $ns }}.svc.cluster.local"
       port: 5432
-      user: "{{ .Values.postgresql.username }}"
-      password: "{{ .Values.postgresql.password }}"
+      user: "@@secret:dify-postgresql/username@@"
+      password: "@@secret:dify-postgresql/password@@"
       timezone: "UTC"
       databases:
         dify: "dify"
@@ -103,7 +109,7 @@ data:
       host: "dify-redis.{{ $ns }}.svc.cluster.local"
       port: 6379
       username: ""
-      password: "{{ .Values.redis.password }}"
+      password: "@@secret:dify-redis/password@@"
       db: 0
 
     # --- Vector database ---------------------------------------------------
@@ -114,17 +120,17 @@ data:
       externalType: "qdrant"
     externalQdrant:
       endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
-      apiKey: "{{ .Values.qdrant.apiKey }}"
+      apiKey: "@@secret:dify-qdrant/apiKey@@"
 
     # --- Persistent storage: S3 (MinIO in-cluster) -------------------------
     persistence:
       type: "s3"
       s3:
         endpoint: "http://dify-minio.{{ $ns }}.svc.cluster.local:9000"
-        accessKey: "{{ .Values.minio.accessKey }}"
-        secretKey: "{{ .Values.minio.secretKey }}"
+        accessKey: "@@secret:dify-minio/accessKey@@"
+        secretKey: "@@secret:dify-minio/secretKey@@"
         region: "us-east-1"
-        bucketName: "{{ .Values.minio.bucket }}"
+        bucketName: "@@secret:dify-minio/bucket@@"
         # VERIFY: MinIO needs path-style addressing. Confirm the accepted
         # values for this field against `helm show values dify/dify`.
         addressType: ""

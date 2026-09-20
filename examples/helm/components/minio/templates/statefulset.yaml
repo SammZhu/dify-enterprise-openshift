@@ -1,17 +1,5 @@
 {{- if .Values.minio.enabled }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dify-minio
-  namespace: {{ .Values.minio.namespace }}
-  labels:
-    demo.redhat.com/application: "dify-enterprise"
-type: Opaque
-stringData:
-  accessKey: {{ .Values.minio.accessKey | quote }}
-  secretKey: {{ .Values.minio.secretKey | quote }}
-  bucket: {{ .Values.minio.bucket | quote }}
+
 ---
 apiVersion: v1
 kind: Service

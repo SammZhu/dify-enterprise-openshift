@@ -1,3 +1,6 @@
+# NOTE: no credentials in this file, by design. The rendered dify-values
+# ConfigMap carries @@secret:<name>/<key>@@ placeholders which
+# scripts/render-dify-values.sh resolves against cluster secrets at install time.
 dify:
   enabled: true
   namespace: dify
@@ -28,8 +31,3 @@ litemaas:
   apiUrl: ""
   apiKey: ""
   model: ""
-
-postgresql: { username: dify, password: "", database: dify }
-redis: { password: "" }
-qdrant: { apiKey: "" }
-minio: { accessKey: "", secretKey: "", bucket: dify }

@@ -54,8 +54,6 @@ components:
     image: quay.io/sclorg/postgresql-16-c9s:latest
     database: dify
     username: dify
-    # DEMO CREDENTIAL - this repo is public. Override per environment.
-    password: "ChangeMe-dify-demo"
     storage:
       size: 30Gi
       storageClassName: ""
@@ -67,8 +65,6 @@ components:
   redis:
     enabled: true
     image: quay.io/sclorg/redis-7-c9s:latest
-    # DEMO CREDENTIAL - override per environment.
-    password: "ChangeMe-dify-demo"
     storage:
       size: 5Gi
       storageClassName: ""
@@ -80,8 +76,6 @@ components:
   qdrant:
     enabled: true
     image: docker.io/qdrant/qdrant:v1.12.4
-    # DEMO CREDENTIAL - override per environment.
-    apiKey: "ChangeMe-dify-demo"
     storage:
       size: 30Gi
       storageClassName: ""
@@ -97,9 +91,6 @@ components:
     image: quay.io/minio/minio:latest
     mcImage: quay.io/minio/mc:latest
     bucket: dify
-    # DEMO CREDENTIALS - override per environment.
-    accessKey: "difyminio"
-    secretKey: "ChangeMe-dify-demo"
     storage:
       size: 50Gi
       storageClassName: ""
