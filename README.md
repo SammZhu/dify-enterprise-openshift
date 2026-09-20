@@ -40,17 +40,17 @@ support chain has a gap. Settle this commercially before a customer engagement.
 
 ## Ordering the environment
 
-Field Sourced Content, with:
+Field Sourced Content — OpenShift Base. Full parameter list, rationale, and the
+lifespan settings that need adjusting immediately are in
+**[docs/ordering.md](docs/ordering.md)**. In short:
 
 | Field | Value |
 |---|---|
-| OpenShift version | **4.21** (or 4.20 — both are in the certification matrix; **not 4.22**) |
-| Cluster size | Multi-node, 3 workers × 16C/64G recommended (8C/32G minimum) |
-| Base workloads | **None.** Virtualization / AI / AAP all unchecked — the resources are better spent on Dify |
-| Existing GitOps Repo | ✅ checked |
-| GitOps URL | this repository |
-| GitOps Path | `examples/helm` |
-| LiteMaaS | ✅ enabled, 30 days |
+| OpenShift version | **4.21** (4.20 also fine; **not 4.22**) |
+| Cluster size | Multi-node, 3 workers × 16C/64G |
+| Base workloads | **None** — Virtualization / AI / AAP all unchecked |
+| Existing GitOps Repo | this repository, revision `main`, path `examples/helm` |
+| LiteMaaS | enabled, 30 days, `gpt-oss-120b` |
 
 Sizing note: Dify's own "test environment" baseline of 1 worker × 4C/16G counts
 Dify alone — PostgreSQL, Redis and Qdrant are external in their model. Here they
