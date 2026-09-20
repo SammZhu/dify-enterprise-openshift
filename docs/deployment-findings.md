@@ -154,6 +154,83 @@ Probing the embedder from inside its own pod fails on `command not found`.
 Preflight borrows curl from a pod that has it (MinIO does), falling back to an
 ephemeral pod. Worth knowing before writing any check against that container.
 
+## Cluster-level permissions: what is actually required
+
+The Dify team asked for CRD management and SCC administration on their account.
+Both were declined, and neither turned out to be necessary. This matters beyond
+this environment: a customer's production cluster will not grant either, so
+establishing the real requirement is one of the more useful things a PoC can
+produce.
+
+### The plugin CRD is outside the certified set
+
+The plugin system is CRD-driven, and **the CRD is not among the 12 certified
+`3.9.8-ubi9` images** — it ships as a separate chart
+(`dify-enterprise-crds-3.9.8.tgz`) that must be installed out of band. The
+certification covers the images; part of the plugin system's definition sits
+outside it. Worth stating plainly in any conversation about what "Partner
+Validated" covers.
+
+### One cluster-scoped action, then nothing
+
+```
+CustomResourceDefinition/difyplugins.enterprise.dify.ai
+  group=enterprise.dify.ai   scope=Namespaced
+```
+
+Installing the CRD is cluster-scoped and done once, by an administrator. **The
+resources it defines are Namespaced**, so every plugin operation afterwards
+happens inside `dify` and needs no cluster-level grant.
+
+So the honest requirement is: *install one CRD, once*. Not CRD management, and
+not SCC administration — which is worth being precise about, because anyone who
+can create a SecurityContextConstraints can create a privileged one and bind it
+to any ServiceAccount. Granting it is granting cluster-admin by another name.
+
+SCC needs are met by binding, not by delegating: `anyuid` is already bound, and
+`privilegedForPluginBuild: true` is one values change away if something proves
+to need it. Nothing has so far — all five dependency pods run under `anyuid`.
+
+### A new CRD's resources are invisible to `admin`
+
+After installing the CRD, both `user1` and the `dify` ServiceAccount were still
+refused on `difyplugins`. The built-in `admin` ClusterRole aggregates, and
+nothing labels a freshly installed CRD into it. Without an explicit Role the
+engineers can see the CRD and create nothing.
+
+Closed by `dify-plugin-crd-access` — namespace-scoped, granting only the
+`enterprise.dify.ai` group. Verified refused before, allowed after, with CRD
+and SCC creation still denied.
+
+### The CRD chart will cascade-delete your plugins
+
+Its CRD lives in `templates/`, not `crds/`. Helm manages `templates/` fully, so
+`helm uninstall dify-enterprise-crds` deletes the CRD — and deleting a CRD
+cascade-deletes every custom resource of that type. Every plugin, gone, not
+recoverable.
+
+The installed CRD now carries `helm.sh/resource-policy: keep`, which makes Helm
+skip it on uninstall:
+
+```bash
+oc annotate crd difyplugins.enterprise.dify.ai helm.sh/resource-policy=keep
+```
+
+Re-apply this after any reinstall of that chart.
+
+### Installing it (not in GitOps — commercial artifact)
+
+```bash
+helm upgrade --install dify-enterprise-crds ./dify-enterprise-crds-3.9.8.tgz \
+  --namespace dify --wait
+oc annotate crd difyplugins.enterprise.dify.ai helm.sh/resource-policy=keep --overwrite
+```
+
+`--create-namespace` from the vendor's instructions is dropped: `dify` already
+exists and is GitOps-managed. Inspect any replacement package before installing
+— this one was clean (one CRD, no ClusterRoles, no webhooks, no image pulls),
+but that is a thing to verify, not assume.
+
 ## Confirmed working
 
 - `anyuid` is sufficient for the dependency tier. Whether Dify's own sandbox and
