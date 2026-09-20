@@ -15,6 +15,7 @@ Dify's chart ships SCC templates requesting:
 | Sandbox | `privileged` | **`dify-sandbox`** (custom) | Its own securityContext says `privileged: false` |
 | Plugin Connector | `nonroot-v2` | **`nonroot-v2`** | Correct — runs as UID 1001, never root |
 | Plugin builder / runner | `anyuid` | `anyuid` (untested) | Needs an actual plugin build to confirm |
+| Plugin workload | `anyuid` | `anyuid` | Bound by the chart itself |
 | Everything else | — | `anyuid` / `restricted-v2` | Most components run as root or a namespace UID |
 
 ## The sandbox does not need privileged
@@ -140,6 +141,38 @@ rendered release contains no cluster-scoped resources at all.
 
 All GitOps-managed, so an environment rebuild restores them without manual
 steps.
+
+## The vendor chart grants privileged anyway — and it is not used
+
+Once the installer could create RoleBindings, the chart's own SCC templates
+took effect and bound `privileged` to the sandbox:
+
+```
+RoleBinding/dify-dify-enterprise-sandbox-privileged
+  roleRef:  system:openshift:scc:privileged
+  subject:  ServiceAccount/dify-dify-enterprise-sandbox
+```
+
+`oc adm policy who-can use scc privileged -n dify` confirms the grant is real.
+
+**The pod still runs under `dify-sandbox`.** When SCCs have equal priority —
+both of these are `null` — OpenShift sorts by restrictiveness and picks the
+*most* restrictive one that admits the pod. `dify-sandbox` denies privileged
+containers, host networking and host PID, so it sorts ahead of `privileged` and
+wins.
+
+That is a good outcome by accident, not by design, and the grant is still worth
+removing:
+
+- The ServiceAccount **can** use `privileged`. Unused authority is still
+  attack surface.
+- If the sandbox's `securityContext` ever asks for something `dify-sandbox`
+  does not allow, it will **silently fall back to `privileged`** and keep
+  running. Nothing fails, nothing warns, and the pod quietly gains host access.
+
+Ask the vendor to disable their SCC templates where the SCCs are supplied by
+the platform team. Grants that are never exercised are exactly the ones nobody
+notices changing.
 
 ## Still unverified
 

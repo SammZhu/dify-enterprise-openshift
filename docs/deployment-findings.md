@@ -4,9 +4,13 @@ What actually happened bringing the dependency tier up on OpenShift 4.21.32
 (RHDP Field Sourced Content, CNV, GUID `dwm4j`). Written from live cluster
 behaviour, not from the docs.
 
-**Status: the product is installed.** 15 of 16 Dify components are running;
-the last one needs a `helm upgrade` re-run (see *Installing the product*).
-The dependency tier passes all 32 preflight checks.
+**Status: running.** All 16 Dify components are ready, every Service has
+endpoints, all six Routes answer, and the dependency tier passes 33 preflight
+checks. Every `langgenius` image in use is `3.9.8-ubi9` — entirely within the
+Red Hat certified set.
+
+The Helm release still reports `failed`; the deployment is fine, the
+bookkeeping is not. See *imagePullSecrets* below.
 
 ## Environment
 
@@ -248,6 +252,34 @@ status:
 ```bash
 helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml
 ```
+
+### 7. Helm and OpenShift fight over `imagePullSecrets`
+
+The second install attempt got past everything above and failed on something
+entirely OpenShift-specific:
+
+```
+conflict occurred while applying object ServiceAccount
+dify-dify-enterprise-plugin-workload:
+conflict with "openshift.io/image-registry-pull-secrets_service-account-controller":
+.imagePullSecrets
+```
+
+OpenShift's service-account-controller injects an `imagePullSecrets` entry into
+every ServiceAccount. The chart also manages that field. Server-side apply sees
+two field managers and refuses:
+
+```
+manager=helm                                          operation=Apply
+manager=openshift.io/image-registry-pull-secrets_...  operation=Apply
+```
+
+**The deployment is unaffected** — both secrets end up on the ServiceAccount and
+everything works. Only Helm's record of the release is wrong. Re-run with
+`--force` to repair it.
+
+This will hit any chart on OpenShift that manages `imagePullSecrets`; it is not
+specific to Dify.
 
 ## Cluster-level permissions: what is actually required
 
