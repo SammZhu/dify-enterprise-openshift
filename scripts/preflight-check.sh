@@ -265,6 +265,13 @@ else
     blocked "curl -H 'Authorization: Bearer \$KEY' $LM_URL/models"
   else
     g "Endpoint reachable, models: $MODELS"
+    # An absent embedder is the failure that looks like success: chat passes,
+    # the loop below finds nothing to test, and the section reads all-green
+    # while RAG is impossible.
+    if ! echo "$MODELS" | grep -q 'embed'; then
+      r "  no embedding model available - RAG cannot work"
+      blocked "The key is scoped to the single model chosen at order time. Request a second key for nomic-embed-text-v1-5, or run an embedder in-cluster."
+    fi
     for m in $MODELS; do
       case "$m" in
         *embed*)
