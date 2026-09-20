@@ -125,6 +125,11 @@ oc get secret dify-postgresql -n dify -o jsonpath='{.data.password}' | base64 -d
 
 ## Collaborating with the Dify team
 
+**[docs/handover.md](docs/handover.md) is the document to send them** — access,
+what is already running, how to install, and where this deployment differs from
+Dify's own install guide.
+
+
 This environment is shared with Dify engineers, who install the product by hand;
 their working deployment is then captured back into this repo. That inverts the
 usual GitOps direction, so two things are set up for it.
