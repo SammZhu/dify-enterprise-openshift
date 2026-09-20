@@ -3,3 +3,17 @@ charts/
 .DS_Store
 dify-values.local.yaml
 kubeconfig*
+
+# Raw capture output is ignored ON PURPOSE.
+#
+# This repository is public. scripts/capture-deployment.sh redacts credentials,
+# but raw cluster output is exactly the kind of thing that leaks something
+# nobody thought about - an internal hostname, a token in an event message, a
+# customer name in a log line.
+#
+# The workflow is: capture -> read -> write up conclusions in
+# docs/deployment-findings.md -> commit that.
+#
+# To commit a specific captured file anyway, after reading it:
+#   git add -f captured/<file>
+captured/

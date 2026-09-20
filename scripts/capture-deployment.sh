@@ -131,5 +131,20 @@ done
 } > "$OUT/NOTES.md"
 
 echo
-echo "Done. Review before committing:"
+echo "Done. Files written:"
 ls -1 "$OUT"
+cat <<'WARN'
+
+-------------------------------------------------------------------------------
+This repository is PUBLIC, and captured/ is gitignored on purpose.
+
+Credentials are redacted, but raw cluster output leaks other things: internal
+hostnames, tokens quoted inside event messages, names in log lines.
+
+  1. Read the files.
+  2. Write the conclusions into docs/deployment-findings.md.
+  3. Commit that file, not the raw capture.
+
+To commit one captured file anyway, after reading it:  git add -f captured/<file>
+-------------------------------------------------------------------------------
+WARN
