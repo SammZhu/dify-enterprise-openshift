@@ -136,5 +136,9 @@ Known quirks already hit on this cluster, in
 a CrashLoopBackOff pod after a template change (delete the pod), and the ollama
 image ships no curl.
 
+We watch the namespace while you work (`scripts/watch-deployment.sh`) — pod
+state, routes and failure events only — so we can help without asking you for
+a status update.
+
 Tell us what you change and what breaks — it gets folded back into the repo so
 the next environment starts closer to working.
