@@ -68,9 +68,15 @@ the namespace's allocated range — which looks at first like it needs `anyuid`.
 It does not: it never needs to be root, so `nonroot-v2` admits it and grants
 strictly less.
 
-One subtlety: **SCC selection is by priority, and `anyuid` (priority 10)
-outranks `nonroot-v2`.** A namespace-wide `anyuid` binding silently masks the
-tighter option, so the connector's ServiceAccount is bound explicitly.
+**Binding `nonroot-v2` by name does not work**, and this is worth knowing
+before you try it. OpenShift selects an SCC by priority: `anyuid` has priority
+10, `nonroot-v2` has none. With `anyuid` bound namespace-wide it wins every
+time, and the tighter binding has no visible effect at all — the pod still
+comes up `scc=anyuid`, with nothing to indicate why.
+
+The fix is a copy of `nonroot-v2` carrying a higher priority (`dify-nonroot`,
+priority 20), bound only to the ServiceAccounts that should use it. Identical
+constraints; it is simply consulted first.
 
 ## A custom SCC needs its own ClusterRole
 

@@ -38,5 +38,8 @@ prereqs:
   # ServiceAccount names are Helm-release derived: <release>-dify-enterprise-*
   sccMatrix:
     enabled: true
+    # Must outrank anyuid (priority 10) or it is never selected.
+    nonrootSccName: dify-nonroot
+    nonrootPriority: 20
     nonrootServiceAccounts:
       - dify-dify-enterprise-plugin-connector-sa

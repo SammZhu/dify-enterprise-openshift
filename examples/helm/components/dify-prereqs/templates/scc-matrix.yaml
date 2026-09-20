@@ -1,29 +1,78 @@
 {{- if and .Values.prereqs.enabled .Values.prereqs.sccMatrix.enabled }}
 ---
 # =============================================================================
-# Per-component SCC assignment.
+# Per-component SCC, tighter than the namespace-wide anyuid baseline.
 # =============================================================================
-# Dify's own chart ships SCC templates requesting `privileged` for the sandbox.
-# It does not need it - the sandbox's own securityContext says
-# `privileged: false`. What it actually asks for is SYS_CHROOT plus privilege
-# escalation, and a dedicated SCC granting exactly that runs it fine.
+# plugin-connector pins runAsUser 1001 and never needs root. restricted-v2
+# rejects it (the UID is outside the namespace range), which makes anyuid look
+# like the answer - but nonroot-v2 admits it and grants strictly less.
 #
-# Measured on OpenShift 4.21, Dify Enterprise 3.9.8:
+# Binding nonroot-v2 by name is NOT enough. OpenShift picks an SCC by
+# priority, and anyuid has priority 10 while nonroot-v2 has none. With anyuid
+# bound namespace-wide, it wins every time and the tighter binding has no
+# visible effect - the pod still comes up with scc=anyuid.
 #
-#   component            needs                       SCC
-#   -------------------  --------------------------  ------------------
-#   sandbox              SYS_CHROOT, escalation      dify-sandbox
-#   plugin-connector     runAsUser 1001 (non-root)   nonroot-v2
-#   plugin builder/run   root                        anyuid   (untested)
-#   everything else      root or namespace UID       anyuid / restricted-v2
-#
-# nonroot-v2 for plugin-connector is tighter than anyuid: it pins a non-root
-# UID outside the namespace range, which restricted-v2 rejects, but it never
-# needs to be root. anyuid would work and grant more than necessary.
-#
-# SCC selection is by priority, and anyuid (priority 10) outranks nonroot-v2.
-# Granting anyuid namespace-wide would therefore mask this, so the connector's
-# ServiceAccount is named explicitly here.
+# So this is a copy of nonroot-v2 with a higher priority, bound only to the
+# ServiceAccounts that should use it. Same constraints, just consulted first.
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{ .Values.prereqs.sccMatrix.nonrootSccName }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    kubernetes.io/description: >-
+      nonroot-v2 equivalent with a priority above anyuid, so components that
+      never need root actually receive it instead of the broader anyuid.
+priority: {{ .Values.prereqs.sccMatrix.nonrootPriority }}
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+readOnlyRootFilesystem: false
+allowedCapabilities:
+  - NET_BIND_SERVICE
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+seccompProfiles:
+  - runtime/default
+volumes:
+  - configMap
+  - csi
+  - downwardAPI
+  - emptyDir
+  - ephemeral
+  - image
+  - persistentVolumeClaim
+  - projected
+  - secret
+users: []
+groups: []
+---
+# A custom SCC gets no system:openshift:scc:<name> ClusterRole of its own.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.prereqs.sccMatrix.nonrootSccName }}-use
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+rules:
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    resourceNames: ["{{ .Values.prereqs.sccMatrix.nonrootSccName }}"]
+    verbs: ["use"]
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -31,14 +80,10 @@ metadata:
   namespace: {{ .Values.prereqs.namespace }}
   labels:
     demo.redhat.com/application: "dify-enterprise"
-  annotations:
-    kubernetes.io/description: >-
-      plugin-connector runs as UID 1001 and never needs root; nonroot-v2 is
-      the tightest SCC that admits it.
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: system:openshift:scc:nonroot-v2
+  name: {{ .Values.prereqs.sccMatrix.nonrootSccName }}-use
 subjects:
 {{- range .Values.prereqs.sccMatrix.nonrootServiceAccounts }}
   - kind: ServiceAccount
