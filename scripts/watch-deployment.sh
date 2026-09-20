@@ -42,8 +42,23 @@ snapshot() {
 }
 
 problems() {
-  oc get events -n "$NS" --field-selector type!=Normal --no-headers 2>/dev/null \
-    | awk '{ $1=""; print "problem  " substr($0,2) }' | cut -c1-160
+  # Keyed on the event's count, not just its text: a recurring failure bumps
+  # count, which makes it a new line and so a new alert. Matching on text alone
+  # would report a problem once and stay silent while it kept happening.
+  #
+  # Kubernetes keeps events for about an hour, so a fresh watch sees old ones
+  # too - that is why the baseline is established before any diffing starts.
+  oc get events -n "$NS" --field-selector type!=Normal -o json 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    for x in json.load(sys.stdin).get('items', []):
+        o = x.get('involvedObject', {})
+        print('%sx %s/%s %s: %s' % (x.get('count', 1), o.get('kind'), o.get('name'),
+                                    x.get('reason'), (x.get('message') or '')[:110]))
+except Exception:
+    pass
+" | sort
 }
 
 echo "Watching namespace '$NS' every ${INTERVAL}s. Ctrl-C to stop."
