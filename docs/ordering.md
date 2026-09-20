@@ -50,17 +50,43 @@ themselves VMs on CNV, so running VMs inside them means nested virtualization.
 **OpenShift AI.** No GPU on the CNV item, so it cannot serve a useful model.
 LiteMaaS covers models instead.
 
-## Lifespan — check this immediately after ordering
+## Lifespan and daily shutdown
 
-The defaults are short and will interrupt work:
+Two settings that are easy to confuse. They fail in opposite directions:
 
-| | Default | Action |
+| | On expiry | Cost |
 |---|---|---|
-| `stop_timestamp` | ~12 hours out (6h `default_runtime`) | **Extend it**, or the cluster stops mid-deployment |
-| `lifespan.end` | ~5 days | Extend toward `relativeMaximum: 30d` for a collaboration |
+| `stop_timestamp` / runtime | **Stops** the cluster; restart any time, data intact | Stopping saves money — this one is an ally |
+| `lifespan.end` | **Destroys** the environment, irreversibly | Extending costs almost nothing while stopped |
 
-Both are adjustable from the service page in the RHDP catalog. Do it before
-handing access to anyone else — a stopped cluster looks like a broken one.
+**Extend `lifespan` to 30 days (`relativeMaximum`) right after ordering.** Cost
+follows running hours, not how long the environment exists, and the default
+~5 days does not cover install, tuning, partner collaboration and capture. The
+LiteMaaS key runs 30 days, so anything shorter wastes it.
+
+**Leave runtime short.** `default_runtime` is 6h, and the initial
+`stop_timestamp` lands roughly a working day out. Let it stop overnight and
+extend each morning as needed — a forgotten running cluster is the expensive
+failure mode, and stopping is free to undo.
+
+### Stopping overnight is safe for this deployment
+
+- **PVC data survives.** All four dependencies are StatefulSets on persistent
+  volumes.
+- **Credentials are not regenerated.** The credential job is idempotent and
+  leaves an existing Secret alone. Without that, every restart would rotate the
+  passwords out from under the databases.
+- **ArgoCD does not interfere.** With `collaborationMode: true`, selfHeal and
+  prune are off, so a restart does not revert manual changes.
+
+OpenShift does have a restart-after-long-shutdown problem — kubelet certificates
+expire and pending CSRs need approving — but that is a matter of weeks stopped,
+not overnight.
+
+### Time zones
+
+`stop_timestamp` is **UTC**. Tonight's shutdown may be someone else's morning.
+Agree the daily window with collaborators before they start a deployment.
 
 ## Finding the cluster
 
