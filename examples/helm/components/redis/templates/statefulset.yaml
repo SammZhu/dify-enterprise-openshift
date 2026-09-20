@@ -53,8 +53,14 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom: { secretKeyRef: { name: dify-redis, key: password } }
           readinessProbe:
+            # NOT /usr/libexec/check-container - that ships in the sclorg
+            # PostgreSQL image, not the Redis one. Ask Redis itself instead,
+            # which also proves the password is accepted.
             exec:
-              command: ["/usr/libexec/check-container"]
+              command:
+                - /bin/sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:
