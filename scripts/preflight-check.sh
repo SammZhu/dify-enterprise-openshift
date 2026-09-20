@@ -229,7 +229,16 @@ elif [ "$PVC_BOUND" = "$PVC_TOTAL" ]; then
   g "PVCs bound: $PVC_BOUND/$PVC_TOTAL"
 else
   r "PVCs bound: $PVC_BOUND/$PVC_TOTAL"
-  blocked "Storage-side problem: oc get pvc -n $NS"
+  # WaitForFirstConsumer PVCs stay Pending until a pod is scheduled. Calling
+  # that a storage fault sends people to the wrong place - the real cause is
+  # whatever is stopping the pods.
+  BM="$(oc get sc "$SC" -o jsonpath='{.volumeBindingMode}' 2>/dev/null)"
+  if [ "$BM" = "WaitForFirstConsumer" ]; then
+    hint "StorageClass $SC is WaitForFirstConsumer: PVCs bind only once a pod is scheduled"
+    hint "Not a storage fault - fix the pod failures above first"
+  else
+    blocked "Storage-side problem: oc get pvc -n $NS"
+  fi
 fi
 
 sec "Dify prerequisites"

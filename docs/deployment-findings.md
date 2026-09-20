@@ -1,56 +1,139 @@
 # Deployment findings
 
-What we learned installing Dify Enterprise on OpenShift. Written up by hand from
-`scripts/capture-deployment.sh` output — the raw capture is gitignored, this file
-is the part that gets shared.
+What actually happened bringing the dependency tier up on OpenShift 4.21.32
+(RHDP Field Sourced Content, CNV, GUID `dwm4j`). Written from live cluster
+behaviour, not from the docs.
 
-> Fill this in as things are confirmed. Each item below is something we
-> predicted from the docs but had not verified on a cluster.
+**Status: 30 checks passing, 1 failing.** The dependency tier is ready for the
+Dify Enterprise chart. The one failure is external — see *LiteMaaS* below.
 
 ## Environment
 
 | | |
 |---|---|
-| Captured | _date_ |
-| OpenShift | _version_ |
-| Dify Enterprise | _chart version / image tags_ |
-| Cluster domain | _`*.apps....`_ |
+| OpenShift | 4.21.32 (inside the 4.20/4.21 certification matrix) |
+| Cluster domain | `apps.cluster-<guid>.dyn.redhatworkshops.io` |
+| StorageClass | `ocs-external-storagecluster-ceph-rbd`, **WaitForFirstConsumer** |
+| Provider | ODF external against the CNV host cluster's Ceph |
 
-## Predictions that held
+## Four bugs that only a real cluster exposed
 
-_Things the rendered defaults got right — worth recording so they don't get
-re-litigated._
+### 1. PreSync hook deadlock — blocked everything
 
-## Predictions that were wrong
+The credential-generation Job ran as an ArgoCD `PreSync` hook but used the
+ServiceAccount that the *main* sync creates. PreSync runs first, so:
 
-_Where `examples/helm/components/dify/templates/dify-values.yaml` disagreed with
-what actually worked. **Fix the template when you record one of these**, don't
-just document it._
+```
+pods "dify-generate-secrets-" is forbidden: error looking up
+service account dify/dify: serviceaccount "dify" not found
+```
 
-## The VERIFY items
+ArgoCD then waited on that hook indefinitely. The ServiceAccount, Role and
+RoleBinding were never created, every StatefulSet pod failed for the same
+reason, and all four PVCs sat Pending. **One deadlock, everything downstream
+blocked**, and the Applications still reported `Synced`.
 
-- [ ] **`persistence.s3.addressType`** — what value does MinIO path-style
-      addressing need? (Docs list the field but not its accepted values.)
-- [ ] **Ingress → Route termination** — did `ingress.tls` without a `secretName`
-      produce edge-terminated Routes using the router's wildcard cert, or did we
-      need to create the 6 Routes by hand?
-- [ ] **SCC actually required** — was `anyuid` enough, or did anything need
-      `privileged`? Check the SCC column in `workloads.txt`, especially for the
-      sandbox and the Kaniko plugin-build pods.
-- [ ] **Plugin build path** — did in-cluster Kaniko builds work against the
-      OpenShift internal registry with `insecureImageRepo: true`?
-- [ ] **Router timeout** — is 600s enough for streaming responses under load?
+Fixed by making the Job an ordinary resource at `sync-wave: "1"`, behind the
+RBAC it needs, with `Replace=true`.
 
-## Open questions from earlier
+Recovering the stuck state needed two extra steps, because deleting the Job is
+not enough — ArgoCD holds it with `argocd.argoproj.io/hook-finalizer` while it
+waits, and it waits because the Job exists:
 
-- [ ] Can one LiteMaaS key serve both a chat model and `nomic-embed-text-v1-5`?
-      RAG needs both online at once.
-- [ ] Does `nomic-embed-text-v1-5` need `search_document:` / `search_query:`
-      prefixes wired up manually in Dify, and did retrieval quality change once
-      they were?
+```bash
+oc patch application <app> -n openshift-gitops --type json \
+  -p '[{"op":"remove","path":"/operation"}]'          # abandon the stuck sync
+oc patch job <job> -n <ns> --type json \
+  -p '[{"op":"remove","path":"/metadata/finalizers"}]' # release the Job
+```
+
+### 2. anyuid without fsGroup makes volumes unwritable
+
+```
+mkdir: cannot create directory '/var/lib/pgsql/data/userdata': Permission denied
+```
+
+`anyuid` runs a container as the image's own USER but assigns **no fsGroup**, so
+a freshly provisioned RBD volume stays `root:root 0755`. The sclorg images run
+as UID 26 (PostgreSQL) and 1001 (Redis) and could not write to their mounts.
+
+Qdrant and MinIO run as **root**, so they came up fine — only two of four failed,
+which made the cause much less obvious than if everything had broken.
+
+Fixed with an explicit `fsGroup` matching each image's UID.
+
+> Worth revisiting: sclorg images are built for OpenShift's `restricted-v2`,
+> where the platform assigns both a UID and an fsGroup automatically. Granting
+> `anyuid` namespace-wide is what removed that. A tighter design would give the
+> data tier its own ServiceAccount without `anyuid`, keeping the elevated SCC
+> for the Dify components that genuinely need root.
+
+### 3. StatefulSets do not replace CrashLoopBackOff pods
+
+After fixing the template, the pod kept failing with the *old* error. It was
+still on the previous `controller-revision-hash` — a StatefulSet will not
+evict a pod that is already failing. `oc delete pod` was required; the new pod
+came up `1/1` immediately.
+
+Check before concluding a fix did not work:
+
+```bash
+oc get pod <pod> -o jsonpath='{.metadata.labels.controller-revision-hash}'
+oc get statefulset <sts> -o jsonpath='{.status.updateRevision}'
+```
+
+### 4. Wrong image's health script
+
+The Redis readiness probe ran `/usr/libexec/check-container`, which ships in the
+sclorg **PostgreSQL** image, not the Redis one. Redis was healthy the whole time
+— `Ready to accept connections` — while the pod sat `Running 0/1` with nothing
+actually wrong. The probe now asks Redis for a `PONG`, which also proves the
+password is accepted.
+
+## LiteMaaS: one key serves one model
+
+This settles a question carried since planning. The key issued with the order
+exposes **only the model chosen at order time**:
+
+```
+models: gpt-oss-120b
+```
+
+No `nomic-embed-text-v1-5`, so **RAG cannot work as ordered**. Chat, agents,
+tool calling and MCP are all fine.
+
+Two ways forward:
+
+1. Request a second LiteMaaS key for `nomic-embed-text-v1-5`.
+2. Run a small embedder in-cluster (`bge-small`, `nomic-embed-text`) on CPU —
+   no GPU needed, and it removes the dependency on key scope entirely.
+
+This was itself a near-miss in tooling: the preflight check looped over the
+model list looking for an embedder, found none, tested nothing, and reported the
+section all-green. An absent embedder now fails loudly.
+
+## Confirmed working
+
+- `anyuid` is sufficient for the dependency tier. Whether Dify's own sandbox and
+  the Kaniko plugin-build path need more is still untested.
+- The three databases Dify requires (`dify`, `enterprise`, `audit`) are created
+  by the init script and verified present.
+- MinIO bucket bootstrap works; `mc` is present in the image, so preflight can
+  verify it directly.
+- Credential generation is idempotent — re-syncing leaves existing Secrets alone.
+- Every `@@secret:` placeholder in the `dify-values` ConfigMap resolves.
+- `image-repo-secret` against the internal registry, created by
+  `preflight-check.sh --fix`.
+
+## Still unverified
+
+These need the Dify Enterprise chart, which is not yet in hand:
+
+- [ ] Do Ingress objects become edge-terminated Routes on the router's wildcard
+      certificate, or must the 6 Routes be created by hand?
+- [ ] `persistence.s3.addressType` — the value MinIO path-style addressing needs.
+- [ ] Does the in-cluster Kaniko plugin build work against the internal registry
+      with `insecureImageRepo: true`, and does it need more than `anyuid`?
+- [ ] Is a 600s router timeout enough for streaming responses under load?
 - [ ] License activation on a short-lived environment — re-activatable after a
       rebuild?
-
-## Things that cost us time
-
-_The expensive surprises. This section is the reason anyone will read this file._
