@@ -11,3 +11,5 @@ redis:
   resources:
     requests: { cpu: "100m", memory: "256Mi" }
     limits:   { cpu: "500m", memory: "1Gi" }
+  # UID the container image runs as; used as fsGroup so the volume is writable.
+  fsGroup: 1001

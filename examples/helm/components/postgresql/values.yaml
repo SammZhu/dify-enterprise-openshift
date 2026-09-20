@@ -13,3 +13,5 @@ postgresql:
   resources:
     requests: { cpu: "500m", memory: "1Gi" }
     limits:   { cpu: "2",    memory: "4Gi" }
+  # UID the container image runs as; used as fsGroup so the volume is writable.
+  fsGroup: 26

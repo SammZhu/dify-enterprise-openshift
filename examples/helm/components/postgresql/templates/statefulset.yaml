@@ -35,6 +35,12 @@ spec:
         demo.redhat.com/application: "dify-enterprise"
     spec:
       serviceAccountName: {{ .Values.postgresql.serviceAccountName }}
+      securityContext:
+        # The postgresql image runs as UID 26. Under anyuid the container keeps
+        # that UID but gets no fsGroup, so the freshly provisioned volume stays
+        # root-owned and the container cannot write to it. fsGroup makes kubelet
+        # chown the mount.
+        fsGroup: {{ .Values.postgresql.fsGroup }}
       containers:
         - name: postgresql
           image: {{ .Values.postgresql.image }}

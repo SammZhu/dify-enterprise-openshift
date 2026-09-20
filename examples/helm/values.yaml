@@ -51,6 +51,7 @@ components:
   # --- PostgreSQL 14+ (Dify requirement) -----------------------------------
   postgresql:
     enabled: true
+    fsGroup: 26
     image: quay.io/sclorg/postgresql-16-c9s:latest
     database: dify
     username: dify
@@ -64,6 +65,7 @@ components:
   # --- Redis 6+ (Dify requirement) -----------------------------------------
   redis:
     enabled: true
+    fsGroup: 1001
     image: quay.io/sclorg/redis-7-c9s:latest
     storage:
       size: 5Gi
