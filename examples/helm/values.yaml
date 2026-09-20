@@ -64,6 +64,13 @@ components:
       enabled: true
       apiGroup: enterprise.dify.ai
 
+  # --- Plugin CRD ----------------------------------------------------------
+  # The DifyPlugin CRD. Not part of the certified image set - it ships as a
+  # separate chart - but it is only an API schema, so it can be version
+  # controlled here and installed by GitOps rather than by hand.
+  pluginCrds:
+    enabled: true
+
   # --- PostgreSQL 14+ (Dify requirement) -----------------------------------
   postgresql:
     enabled: true
