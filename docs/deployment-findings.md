@@ -122,6 +122,32 @@ model list looking for an embedder, found none, tested nothing, and reported the
 section all-green. An absent embedder now fails loudly — and only when nothing
 else provides one.
 
+### Monitoring that fails silently is worse than none
+
+Two failure modes hit while watching this namespace, and they look identical
+from the outside — nothing being reported.
+
+**The watch was blind for 30 minutes.** `user1` logged in during the window and
+no event fired. The logic was correct in isolation; the background shell simply
+did not have `~/.local/bin` on PATH, so `oc` was missing and every collector
+returned empty. Empty output is indistinguishable from "nothing changed".
+Tools are now resolved to absolute paths, and the script refuses to start if
+one is missing.
+
+**It also cried wolf.** On first arming it reported eight failures that had been
+fixed 90 minutes earlier — Kubernetes keeps events for about an hour, and with
+an empty baseline all of that history looked new. A monitor that cries wolf
+gets ignored the next time it is right. The baseline is now established before
+any diffing.
+
+There is a third case specific to this environment: **the cluster is stopped
+overnight**, and losing contact looks exactly like a quiet period. The watch now
+says so explicitly, and says when contact returns.
+
+The general rule: a watch must be able to prove it is alive. Arming it prints a
+baseline count, so silence afterwards means "nothing happened" rather than
+"something broke and I cannot tell you".
+
 ### The ollama image has no curl
 
 Probing the embedder from inside its own pod fails on `command not found`.
