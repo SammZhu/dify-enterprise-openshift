@@ -184,11 +184,13 @@ from Dify's deployment manual.
 
 Four things differ from Dify's documented happy path. All four are handled here.
 
-**Pods must run as root.** Dify's Resources Checklist says so explicitly, naming
-OpenShift. `dify-prereqs` binds the `anyuid` SCC to the Dify ServiceAccount and to
-`default`. If plugin *builds* fail on permissions, set
-`components.prereqs.privilegedForPluginBuild: true` — this is a real privilege
-escalation, so treat it as a deliberate decision.
+**Pods must run as root — but the sandbox does not need `privileged`.** Dify's
+Resources Checklist requires root on OpenShift, and their chart ships SCC
+templates asking for `privileged` for the sandbox. Measured on a running
+cluster, the sandbox only needs `SYS_CHROOT` plus privilege escalation, and a
+dedicated SCC granting exactly that runs it with host access and privileged
+containers all denied. **[docs/scc-requirements.md](docs/scc-requirements.md)**
+has the per-component matrix, and all of it is GitOps-managed.
 
 **Plugins are built in-cluster with Kaniko.** A Dify plugin package is not an
 image; `plugin_connector` builds it into one with
