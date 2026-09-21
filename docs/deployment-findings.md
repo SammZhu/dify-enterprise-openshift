@@ -381,6 +381,40 @@ source:
 Until that repository URL and credentials are available, this stays a scripted
 manual step.
 
+## A failed query looks exactly like a missing resource
+
+After the cluster restarted, preflight produced this:
+
+```
+[FAIL] Namespace dify missing          -> GitOps has not synced
+[PASS] SCC RoleBinding present (5)
+[PASS] PVCs bound: 5/5
+[PASS] PostgreSQL pod Ready
+```
+
+Self-contradictory — RoleBindings and PVCs cannot exist in a namespace that
+does not. The cause was intermittent `Unauthorized`: a token on the edge of
+expiry after the cluster came back up. Five consecutive probes, one failed.
+
+Every failing query was counted as an absent resource, and the remediation
+hints pointed at GitOps, which was entirely healthy with all eight Applications
+`Synced/Healthy`. Anyone following those hints would have spent their time in
+the wrong place.
+
+The check now proves it can read cluster config before starting, and proves it
+again at the end. If authentication lapsed in between, it says the whole result
+is untrustworthy and exits 3 rather than presenting plausible nonsense:
+
+```
+RESULT UNTRUSTWORTHY - cluster authentication failed during this run.
+Queries that could not reach the API were counted as missing resources.
+```
+
+The general shape of this keeps recurring in this project: **a tool that
+cannot reach its subject must say so, because silence and failure both render
+as "not there".** The same fix went into the deployment watch earlier, for the
+same reason.
+
 ## Confirmed working
 
 - `anyuid` is sufficient for the dependency tier. Whether Dify's own sandbox and

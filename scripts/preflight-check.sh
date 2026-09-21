@@ -38,6 +38,22 @@ sec() { printf '\n\033[1m=== %s ===\033[0m\n' "$*"; }
 act() { printf '  \033[36m[FIX ]\033[0m %s\n' "$*"; }
 
 oc whoami >/dev/null 2>&1 || { echo "Not logged in to a cluster. Run 'oc login' first."; exit 2; }
+
+# Authentication can lapse mid-run - a token nearing expiry, or an API server
+# still settling after the cluster was restarted. Every query then fails, and
+# a failed query is indistinguishable from an absent resource: the checks
+# below would report "Namespace missing, GitOps has not synced" while GitOps
+# is perfectly healthy, sending someone to debug the wrong thing entirely.
+#
+# So: prove authentication works before starting, and prove it again at the
+# end. If it broke in between, the whole result is untrustworthy and says so.
+auth_ok() { oc get ingresses.config/cluster >/dev/null 2>&1; }
+auth_ok || {
+  echo "Cannot read cluster config even though 'oc whoami' works."
+  echo "The token is probably expired or the API server is still settling."
+  echo "  oc login -u <user> -p <password> <api-url>"
+  exit 2
+}
 rand() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32; }
 # POST JSON from inside the cluster. The ollama image ships no curl, so borrow
 # one from a pod that has it; fall back to an ephemeral pod.
@@ -352,6 +368,18 @@ fi
 
 # ================================== outcome ==================================
 sec "Summary"
+
+# If authentication lapsed during the run, the failures above are noise.
+if ! auth_ok; then
+  echo
+  echo "  \033[31mRESULT UNTRUSTWORTHY\033[0m - cluster authentication failed during this run."
+  echo "  Queries that could not reach the API were counted as missing resources,"
+  echo "  so the failures above are probably not real. Re-authenticate and re-run:"
+  echo "    oc login -u <user> -p <password> <api-url>"
+  echo "    $0 $NS"
+  exit 3
+fi
+
 printf '  %d passed, %d failed, %d warnings\n' "$PASS" "$FAIL" "$WARN"
 
 UNIQUE_FIXES="$(echo "$FIXES" | tr ' ' '\n' | grep -v '^$' | awk '!seen[$0]++' | paste -sd' ' -)"
