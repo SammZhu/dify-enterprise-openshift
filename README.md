@@ -4,6 +4,12 @@ GitOps content for running **Dify Enterprise v3.9.8** on **OpenShift 4.20 / 4.21
 built to drop straight into a Red Hat Demo Platform
 [Field Sourced Content](https://github.com/rhpds/field-sourced-content-template) order.
 
+**Status: verified end to end.** All 16 Dify components run, plugins build
+in-cluster and push to the internal registry, and the complete cluster-level
+requirement is *one CRD, installed once*. No component runs `privileged` and
+nobody needs SCC administration — see
+**[docs/scc-requirements.md](docs/scc-requirements.md)**.
+
 ## What this is
 
 Dify Enterprise is [Partner Validated on OpenShift](https://catalog.redhat.com/en/software/container-stacks/detail/69fc3bfc14f7cd2916ffd595)
@@ -20,6 +26,8 @@ It does **not** ship the data tier. This repo provides everything else:
 | `redis` | Redis 7 | Dify requires 6+ |
 | `qdrant` | Qdrant | The vector DB Dify officially recommends; its support list is very short |
 | `minio` | MinIO + bucket bootstrap | Provides the S3-compatible endpoint Dify requires |
+| `embedder` | `nomic-embed-text` on CPU, OpenAI-compatible | A LiteMaaS key serves only the one model ordered, so RAG had no embedder |
+| `plugin-crds` | The `DifyPlugin` CRD | CRD-driven plugin system; the CRD is not in the certified image set |
 | `dify` | Renders a cluster-ready `dify-values.yaml` | See below |
 
 ## Two boundaries, stated up front
@@ -238,16 +246,30 @@ and `litemaas.apiKey`.
 
 ## Open items
 
+Answered along the way, recorded in
+[docs/deployment-findings.md](docs/deployment-findings.md):
 
-- [ ] Can one LiteMaaS key serve both a chat model and the embedding model? RAG
-      needs both online simultaneously. The catalog wording (`a selected model`,
-      singular `litemaas.model`) suggests one key per model.
-- [ ] Dify Enterprise License activation policy on short-lived environments —
-      can a License be re-activated after the environment is rebuilt?
-- [ ] Fields marked `VERIFY` in the rendered values (notably
-      `persistence.s3.addressType` for MinIO path-style addressing, and whether
-      the generated Routes come out edge-terminated) need checking against
-      `helm show values dify/dify` and a live cluster.
+- [x] **A LiteMaaS key serves exactly one model.** Ordering a chat model leaves
+      no embedder, so `components.embedder` runs one in-cluster — same
+      768-dimension model, so switching later needs no reindexing.
+- [x] **Ingress → Route.** All six come out edge-terminated on the router's
+      wildcard certificate; no manual Routes.
+- [x] **Plugin builds.** Kaniko runs under `anyuid`; what was missing was the
+      `system:image-builder` role — a ServiceAccount token is not push
+      permission.
+- [x] **SCC.** `dify-sandbox` (SYS_CHROOT only) instead of `privileged`;
+      `dify-nonroot` for the plugin connector.
+
+Still open:
+
+- [ ] `persistence.s3.addressType` — whether MinIO needs path-style addressing.
+      Nothing has failed on file upload, so probably not, but it is untested.
+- [ ] Is a 600s router timeout enough for streaming under load?
+- [ ] License activation on a short-lived environment — re-activatable after a
+      rebuild?
+- [ ] Ask Dify to disable their SCC templates: they bind `privileged` to the
+      sandbox, which is unused but would be silently fallen back to if the
+      sandbox ever asked for more.
 
 ## Swapping MinIO for real S3 / ECR
 
