@@ -250,7 +250,7 @@ ready. With the permission fixed, a re-run creates them and repairs the release
 status:
 
 ```bash
-helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml
+helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml --force
 ```
 
 ### 7. Helm and OpenShift fight over `imagePullSecrets`

@@ -48,8 +48,15 @@ cd dify-enterprise-openshift
 ./scripts/preflight-check.sh dify        # confirm the environment is ready
 ./scripts/render-dify-values.sh dify > dify-values.yaml
 
-helm install dify <your-chart-repo>/dify -n dify -f dify-values.yaml
+helm upgrade --install dify <your-chart-repo>/dify -n dify -f dify-values.yaml --force
 ```
+
+`--force` matters on OpenShift: the service-account-controller injects
+`imagePullSecrets` into every ServiceAccount, the chart manages that same field,
+and server-side apply refuses the conflict. The deployment is unaffected but the
+release gets marked `failed`. This applies to any chart on OpenShift that
+manages `imagePullSecrets`, not just Dify's.
+
 
 `render-dify-values.sh` produces a values file already filled in with this
 cluster's domains, the in-cluster service endpoints, and the real credentials

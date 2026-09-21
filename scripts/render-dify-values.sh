@@ -9,7 +9,8 @@
 #
 # Usage:
 #   ./scripts/render-dify-values.sh [namespace] > dify-values.yaml
-#   helm install dify <chart-repo>/dify -n dify -f dify-values.yaml
+#   helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml --force
+#     (--force: OpenShift and the chart both manage imagePullSecrets)
 #
 set -euo pipefail
 

@@ -69,8 +69,15 @@ are healthy:
 ./scripts/render-dify-values.sh dify > dify-values.yaml
 
 # 3. Install the commercial chart
-helm install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml
+helm upgrade --install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml --force
 ```
+
+`--force` matters on OpenShift: the service-account-controller injects
+`imagePullSecrets` into every ServiceAccount, the chart manages that same field,
+and server-side apply refuses the conflict. The deployment is unaffected but the
+release gets marked `failed`. This applies to any chart on OpenShift that
+manages `imagePullSecrets`, not just Dify's.
+
 
 ### Checking readiness first
 

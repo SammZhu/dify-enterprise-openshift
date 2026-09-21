@@ -388,7 +388,12 @@ if [ "$FAIL" -eq 0 ]; then
   echo
   echo "  Ready for the Dify Enterprise chart."
   echo "    ./scripts/render-dify-values.sh $NS > dify-values.yaml"
-  echo "    helm install dify <chart-repo>/dify -n $NS -f dify-values.yaml"
+  echo "    helm upgrade --install dify <chart-repo>/dify -n $NS -f dify-values.yaml --force"
+  echo
+  echo "  --force is needed on OpenShift: the service-account-controller injects"
+  echo "  imagePullSecrets into every ServiceAccount, the chart manages that same"
+  echo "  field, and server-side apply refuses the conflict. Without it the"
+  echo "  release ends up marked failed even though the deployment is fine."
   exit 0
 fi
 
