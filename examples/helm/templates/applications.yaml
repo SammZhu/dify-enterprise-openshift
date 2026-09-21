@@ -45,6 +45,8 @@ spec:
             role: {{ .Values.components.prereqs.userAccess.role }}
             allowRoleCreation: {{ .Values.components.prereqs.userAccess.allowRoleCreation }}
             count: {{ .Values.user.count }}
+          imageBuilder:
+            enabled: {{ .Values.components.prereqs.imageBuilder.enabled }}
           sandboxScc:
             enabled: {{ .Values.components.prereqs.sandboxScc.enabled }}
             name: {{ .Values.components.prereqs.sandboxScc.name }}

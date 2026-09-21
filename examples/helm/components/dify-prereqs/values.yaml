@@ -43,3 +43,7 @@ prereqs:
     nonrootPriority: 20
     nonrootServiceAccounts:
       - dify-dify-enterprise-plugin-connector-sa
+  # Push rights to the OpenShift internal registry, needed by the in-cluster
+  # Kaniko plugin build. Not required if plugins push to an external registry.
+  imageBuilder:
+    enabled: true

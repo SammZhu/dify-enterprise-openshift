@@ -1,0 +1,37 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.imageBuilder.enabled }}
+---
+# Lets the plugin build push to the OpenShift internal registry.
+#
+# Dify builds each plugin into a container image in-cluster with Kaniko, then
+# pushes it. Kaniko itself runs fine under anyuid - the SCC is not the
+# obstacle. The push is:
+#
+#   UNAUTHORIZED: authentication required
+#   push .../dify/openai_api_compatible-<id>:0.0.66
+#
+# image-repo-secret carries a token for this ServiceAccount, but holding a
+# token is not the same as being allowed to push. The internal registry checks
+# for the image-builder role, and without it every plugin build fails at the
+# last step after a successful build - which makes it look like a registry or
+# credential problem rather than a missing role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-image-builder
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:image-builder
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.prereqs.serviceAccountName }}
+    namespace: {{ .Values.prereqs.namespace }}
+  # The build Job runs under the chart's own ServiceAccount; whichever one
+  # holds the token in image-repo-secret needs this, so cover the namespace.
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:serviceaccounts:{{ .Values.prereqs.namespace }}
+{{- end }}

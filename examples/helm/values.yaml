@@ -55,6 +55,9 @@ components:
       role: admin
       allowRoleCreation: true
     # Least-privilege SCC for the sandbox: SYS_CHROOT only, not privileged.
+    # Push rights to the internal registry for the Kaniko plugin build.
+    imageBuilder:
+      enabled: true
     sandboxScc:
       enabled: true
       name: dify-sandbox
