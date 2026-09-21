@@ -438,9 +438,10 @@ These need the Dify Enterprise chart, which is not yet in hand:
       router's default wildcard certificate. `ingress.tls` with hosts and no
       `secretName` is correct on OpenShift; no manual Routes needed.
 - [ ] `persistence.s3.addressType` — the value MinIO path-style addressing needs.
-- [ ] Does the in-cluster Kaniko plugin build work against the internal registry
-      with `insecureImageRepo: true`? (`plugin-connector` now runs under
-      `anyuid`; whether a *build* needs more is still untested.)
+- [x] **Kaniko plugin build: confirmed working.** Builds under `anyuid` and
+      pushes to the internal registry. Needed one addition — the
+      `system:image-builder` role; a ServiceAccount token alone is not push
+      permission. The plugin runtime then runs 2/2 under `anyuid`.
 - [ ] Is a 600s router timeout enough for streaming responses under load?
 - [ ] License activation on a short-lived environment — re-activatable after a
       rebuild?

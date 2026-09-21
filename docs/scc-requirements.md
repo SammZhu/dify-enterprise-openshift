@@ -14,7 +14,7 @@ Dify's chart ships SCC templates requesting:
 |---|---|---|---|
 | Sandbox | `privileged` | **`dify-sandbox`** (custom) | Its own securityContext says `privileged: false` |
 | Plugin Connector | `nonroot-v2` | **`nonroot-v2`** | Correct — runs as UID 1001, never root |
-| Plugin builder / runner | `anyuid` | `anyuid` (untested) | Needs an actual plugin build to confirm |
+| Plugin builder / runner | `anyuid` | **`anyuid`** — confirmed | Kaniko build and plugin runtime both admitted by anyuid |
 | Plugin workload | `anyuid` | `anyuid` | Bound by the chart itself |
 | Everything else | — | `anyuid` / `restricted-v2` | Most components run as root or a namespace UID |
 
@@ -174,8 +174,48 @@ Ask the vendor to disable their SCC templates where the SCCs are supplied by
 the platform team. Grants that are never exercised are exactly the ones nobody
 notices changing.
 
-## Still unverified
+## Plugin builds: confirmed, and the obstacle was not SCC
 
-- **Plugin builder / runner.** Dify says `anyuid`. Confirming needs a real
-  plugin build, where Kaniko runs in-cluster. If it needs more than `anyuid`,
-  the answer belongs here — and it is the last piece of the SCC picture.
+A real plugin install (DeepSeek provider) settles the last question. Kaniko
+builds in-cluster under `anyuid`, and the resulting plugin runtime runs under
+`anyuid` too — exactly what Dify said, nothing more:
+
+```
+POD  8e149...-5n5fd          Completed   SCC=anyuid   # the Kaniko build
+POD  8e149...-qpl9b   2/2    Running     SCC=anyuid   # the plugin runtime
+     image-registry.openshift-image-registry.svc:5000/dify/deepseek-8e149...:0.0.24
+     nginx:1.29.4-alpine
+```
+
+**The build failed initially, but not on SCC.** It built successfully and was
+refused at the push:
+
+```
+UNAUTHORIZED: authentication required
+push .../dify/openai_api_compatible-<id>:0.0.66
+```
+
+`image-repo-secret` holds a ServiceAccount token, and **holding a token is not
+the same as being allowed to push**. The OpenShift internal registry requires
+the `image-builder` role; without it `can-i create imagestreams/layers` is no
+and every plugin build dies at the last step.
+
+This is an easy one to misread: the build runs to completion, so it looks like
+a credential or registry fault rather than a missing role binding. The fix is
+one RoleBinding (`dify-image-builder`), and it is in GitOps.
+
+## The complete picture
+
+Every cluster-level requirement for Dify Enterprise on OpenShift, verified
+end to end:
+
+| Requirement | Scope | Who |
+|---|---|---|
+| Install the plugin CRD | Cluster, **once** | Platform team |
+| Create the SCCs and bind them | Cluster, once | Platform team, via GitOps |
+| `system:image-builder` for plugin pushes | **Namespace** | Platform team, via GitOps |
+| Namespace `*` so the chart can create its Roles | **Namespace** | Platform team, via GitOps |
+| Install and operate Dify | **Namespace** | Application team |
+
+No component runs `privileged`. Nobody needs SCC administration. The only
+cluster-scoped action is installing one CRD, once.
