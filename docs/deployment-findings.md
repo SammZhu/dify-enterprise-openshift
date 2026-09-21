@@ -412,8 +412,25 @@ Queries that could not reach the API were counted as missing resources.
 
 The general shape of this keeps recurring in this project: **a tool that
 cannot reach its subject must say so, because silence and failure both render
-as "not there".** The same fix went into the deployment watch earlier, for the
-same reason.
+as "not there".**
+
+It has now bitten four times, in four different disguises:
+
+| What happened | What it looked like |
+|---|---|
+| Watch had no `oc` on PATH | 30 minutes of silence — "nobody is doing anything" |
+| Watch armed with an empty baseline | Eight fixed failures reported as new — "everything is broken" |
+| Preflight ran with a lapsed token | "Namespace missing, GitOps has not synced" — while GitOps was healthy |
+| One collector returned empty for a cycle | Three two-hour-old plugins reported as just created |
+
+The last one is the subtlest: the tool was reachable, authenticated, and mostly
+working. A single query failed for one cycle, its resources vanished from the
+baseline, and they all "reappeared" on the next pass.
+
+The rule that covers all four: **a check must distinguish "I looked and it is
+not there" from "I could not look."** Concretely — prove reachability before
+trusting a baseline, make every collector signal failure rather than return
+empty, and discard a partial sample instead of diffing it.
 
 ## Confirmed working
 
