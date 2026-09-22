@@ -336,6 +336,71 @@ The rendered values now set `ingress.enabled: false` and put the router
 annotations (600s timeout, forwarded headers) under
 `global.openshift.routes.annotations` where they belong.
 
+## RAG verified end to end — and what it took to get a hit
+
+The full chain works:
+
+```
+document → MinIO → 28 segments → in-cluster embedder (768-dim, ~80ms/segment on CPU)
+        → Qdrant (28 points, green) → hybrid retrieval → DeepSeek answers from context
+```
+
+The proof is a number: asked "how much memory does dify-dify-enterprise-api
+use", the answer was **536.7 MiB** — a value that exists only inside a Markdown
+table in segment 3. No model invents that.
+
+**This closes the "document content never leaves the cluster" claim with
+evidence.** Vectorisation happens entirely in-cluster; only the final generation
+call goes to an external model.
+
+Getting there took four attempts, and the reasons are worth keeping.
+
+### Pure vector search barely works on tables
+
+This document is largely Markdown tables. With `keyword_weight: 0` — the
+default when hybrid search is selected without tuning — retrieval returned
+nothing useful for several rounds. Table rows like `536.7MiB` or `Kaniko` are
+literals; semantic similarity is the wrong tool for them.
+
+Weights of **0.7 vector / 0.3 keyword** produced the hit immediately.
+
+### `top_k` too low lets headings crowd out content
+
+At `top_k: 3`, all three slots went to heading segments — short, general text
+that scores well against general questions. The segments holding the actual
+data never made the cut. The model then reported, correctly, that the context
+contained only headings.
+
+Raising it to 10 across a 28-segment document costs nothing and fixes it.
+
+### Ask with the document's own words
+
+`dify-dify-enterprise-api 占用多少内存` hits. `有哪些微服务组件` does not, even
+though both describe the same table. Worth knowing before scripting a demo.
+
+### Without instruction, the model covers for a failed retrieval
+
+The early zero-recall attempts produced confident 2000-character answers built
+entirely from the model's own knowledge. Nothing indicated the knowledge base
+had contributed nothing.
+
+Adding one line to the prompt changed the behaviour:
+
+> 请严格依据检索到的上下文回答,上下文中没有的内容就说不知道,不要编造。
+
+After which a question the document could not answer got: *"根据目前提供的信息,
+我无法确定..."* — which is the correct answer, and makes a broken retrieval
+visible instead of invisible.
+
+**For a customer demo this is not optional.** A RAG system that fabricates when
+retrieval misses will be found out by the first off-script question, and the
+credibility loss covers everything else being demonstrated.
+
+### Therefore: rehearse the questions
+
+These four points combine into one operational rule — the questions in a demo
+script have to be tested against the actual index beforehand, not improvised.
+
 ## Cluster-level permissions: what is actually required
 
 The Dify team asked for CRD management and SCC administration on their account.
