@@ -43,6 +43,23 @@ prereqs:
     nonrootPriority: 20
     nonrootServiceAccounts:
       - dify-dify-enterprise-plugin-connector-sa
+  # SSO against Red Hat build of Keycloak. OFF by default, because turning it
+  # on grants this namespace read access to the RHBK admin credential in
+  # another namespace - see sso-keycloak-access.yaml for the full trade-off.
+  # With it off, register the clients out-of-band instead:
+  #   ./scripts/create-sso-client.sh workspace
+  sso:
+    enabled: false
+    keycloakNamespace: keycloak
+    adminSecretName: keycloak-initial-admin
+    # Reusing the realm that already backs the cluster's own OAuth means one
+    # identity source for the platform and for the application on it.
+    realm: sso
+    workspaceClientId: dify-enterprise
+    dashboardClientId: dify-dashboard
+    # Enforce S256 rather than merely accept it, so that switching Dify's PKCE
+    # toggle off fails the login instead of quietly weakening it.
+    enforcePkceS256: true
   # Push rights to the OpenShift internal registry, needed by the in-cluster
   # Kaniko plugin build. Not required if plugins push to an external registry.
   imageBuilder:

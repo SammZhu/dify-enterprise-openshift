@@ -52,6 +52,32 @@ code_challenge_method = S256
 which **enforces** it: if Dify's PKCE toggle is ever switched off, the login
 fails loudly instead of silently dropping to a weaker flow.
 
+## What GitOps can and cannot reach
+
+`prereqs.sso.enabled` turns on a sync-wave-1 Job that registers both clients and
+syncs their secrets into the namespace — same shape as the credential job, same
+rule about Git. It is **off by default**, because it is not free:
+
+| | |
+|---|---|
+| Reaches | the Keycloak clients, and the Secrets holding their credentials |
+| Costs | a Role in the Keycloak namespace letting the Dify namespace read the RHBK admin Secret |
+| Cannot reach | Dify's own SSO settings — a row in its `enterprise` database, not a Kubernetes object |
+| Must not use | `KeycloakRealmImport`. RHBK 26.x has no `KeycloakClient` CRD, and a realm import rewrites the whole realm — which here also serves the cluster's own OAuth |
+
+The Role is narrowed with `resourceNames` to the single admin Secret, but it is
+still a real grant: anyone who can create a pod in the Dify namespace can read
+the RHBK admin credential. For production, invert it — register the client from
+the platform side and deliver only the Secret, leaving `sso.enabled` false.
+
+On re-sync the job refreshes redirect URIs (route hostnames change when a
+cluster is rebuilt) and leaves the client secret alone. The update path reads
+the client's current representation back and merges onto it. A partial `PUT`
+would have been a quiet disaster: a Keycloak client update is a whole-object
+replace, so omitting `publicClient` resets it to `true` and silently demotes a
+confidential client to a public one. Verified against the live clients —
+`publicClient=false` survived the round trip.
+
 ## Two things that cost real time
 
 ### A `%` in the client secret

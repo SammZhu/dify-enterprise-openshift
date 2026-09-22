@@ -1,0 +1,176 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.sso.enabled }}
+---
+# =============================================================================
+# Registers Dify's OIDC clients in RHBK and parks their secrets on the cluster.
+# =============================================================================
+# Same shape as generate-secrets-job.yaml: an ordinary resource at sync-wave 1
+# (not a PreSync hook - that deadlocks against the ServiceAccount it needs),
+# idempotent, and it never puts a credential in Git.
+#
+# Two clients, because they are different trust levels: workspace members log
+# into the application, dashboard users administer the deployment.
+#
+# What this does NOT do: configure Dify. Dify keeps its SSO settings in a row
+# of its `enterprise` database, not in a Kubernetes object, so GitOps reaches
+# the identity provider and the credential but stops at the application's own
+# configuration. That part is entered once in the UI - see docs/sso-rhbk.md.
+# =============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dify-register-sso-clients
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        demo.redhat.com/application: "dify-enterprise"
+    spec:
+      serviceAccountName: {{ .Values.prereqs.serviceAccountName }}
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: {{ .Values.prereqs.cliImage }}
+          env:
+            - name: NS
+              value: {{ .Values.prereqs.namespace | quote }}
+            - name: KC_NS
+              value: {{ .Values.prereqs.sso.keycloakNamespace | quote }}
+            - name: REALM
+              value: {{ .Values.prereqs.sso.realm | quote }}
+            - name: ADMIN_SECRET
+              value: {{ .Values.prereqs.sso.adminSecretName | quote }}
+            - name: WORKSPACE_CLIENT
+              value: {{ .Values.prereqs.sso.workspaceClientId | quote }}
+            - name: DASHBOARD_CLIENT
+              value: {{ .Values.prereqs.sso.dashboardClientId | quote }}
+            - name: ENFORCE_PKCE
+              value: {{ .Values.prereqs.sso.enforcePkceS256 | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              # ---- Keycloak hostname, from its Route ----------------------
+              KC_HOST=$(oc get route -n "$KC_NS" \
+                -o jsonpath='{.items[0].spec.host}')
+              [ -n "$KC_HOST" ] || { echo "no Route in namespace $KC_NS"; exit 1; }
+              ISSUER="https://$KC_HOST/realms/$REALM"
+              echo "Keycloak: $KC_HOST  realm: $REALM"
+
+              # ---- admin token --------------------------------------------
+              AU=$(oc get secret "$ADMIN_SECRET" -n "$KC_NS" \
+                   -o jsonpath='{.data.username}' | base64 -d)
+              AP=$(oc get secret "$ADMIN_SECRET" -n "$KC_NS" \
+                   -o jsonpath='{.data.password}' | base64 -d)
+              TOKEN=$(curl -sk -X POST \
+                "https://$KC_HOST/realms/master/protocol/openid-connect/token" \
+                -d client_id=admin-cli -d "username=$AU" -d "password=$AP" \
+                -d grant_type=password \
+                | python3 -c 'import sys,json;print(json.load(sys.stdin).get("access_token",""))')
+              [ -n "$TOKEN" ] || { echo "could not authenticate to Keycloak"; exit 1; }
+
+              api() { curl -sk -H "Authorization: Bearer $TOKEN" "$@"; }
+              ADMIN="https://$KC_HOST/admin/realms/$REALM"
+
+              # Dify's routes, by role. The chart names them <release>-console,
+              # <release>-app and <release>-enterprise.
+              route_hosts() {
+                oc get route -n "$NS" \
+                  -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' \
+                  | grep -E -- "$1" || true
+              }
+
+              json_list() {  # quote each argument into a JSON array
+                python3 -c 'import sys,json;print(json.dumps([a for a in sys.argv[1:]]))' "$@"
+              }
+
+              register() {
+                local client_id="$1" secret_name="$2" pattern="$3"
+
+                local hosts; hosts=$(route_hosts "$pattern")
+                if [ -z "$hosts" ]; then
+                  echo "no Route matching '$pattern' in $NS - skipping $client_id"
+                  return 0
+                fi
+
+                local redirects=() origins=()
+                local h
+                for h in $hosts; do
+                  redirects+=("https://$h/*")
+                  origins+=("https://$h")
+                done
+                local RU WO; RU=$(json_list "${redirects[@]}")
+                WO=$(json_list "${origins[@]}")
+
+                local uuid
+                uuid=$(api "$ADMIN/clients?clientId=$client_id" \
+                  | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["id"] if d else "")')
+
+                local pkce='{}'
+                [ "$ENFORCE_PKCE" = "true" ] && \
+                  pkce='{"pkce.code.challenge.method":"S256"}'
+
+                if [ -z "$uuid" ]; then
+                  api -X POST "$ADMIN/clients" -H 'Content-Type: application/json' \
+                    -d "{\"clientId\":\"$client_id\",\"protocol\":\"openid-connect\",
+                         \"publicClient\":false,\"standardFlowEnabled\":true,
+                         \"directAccessGrantsEnabled\":false,
+                         \"serviceAccountsEnabled\":false,
+                         \"redirectUris\":$RU,\"webOrigins\":$WO,
+                         \"attributes\":$pkce}" >/dev/null
+                  uuid=$(api "$ADMIN/clients?clientId=$client_id" \
+                    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["id"] if d else "")')
+                  [ -n "$uuid" ] || { echo "failed to create client $client_id"; return 1; }
+                  echo "client $client_id created"
+                else
+                  # A Keycloak client update is a whole-object replace. Sending
+                  # only the changed fields would silently reset the rest -
+                  # publicClient would default back to true, turning a
+                  # confidential client into a public one. So read the current
+                  # representation back, merge onto it, and assert the two
+                  # properties this deployment depends on rather than trusting
+                  # whatever the client may have drifted to.
+                  api "$ADMIN/clients/$uuid" \
+                    | RU="$RU" WO="$WO" PKCE="$pkce" \
+                      python3 -c 'import json,os,sys; c=json.load(sys.stdin); c["redirectUris"]=json.loads(os.environ["RU"]); c["webOrigins"]=json.loads(os.environ["WO"]); c.setdefault("attributes",{}).update(json.loads(os.environ["PKCE"])); c["publicClient"]=False; c["standardFlowEnabled"]=True; print(json.dumps(c))' > /tmp/client.json
+                  api -X PUT "$ADMIN/clients/$uuid" \
+                    -H 'Content-Type: application/json' \
+                    --data-binary @/tmp/client.json >/dev/null
+                  rm -f /tmp/client.json
+                  echo "client $client_id already existed - redirects refreshed, confidential asserted"
+                fi
+
+                local sec
+                sec=$(api "$ADMIN/clients/$uuid/client-secret" \
+                  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))')
+                [ -n "$sec" ] || { echo "no secret returned for $client_id"; return 1; }
+
+                # Keycloak is the source of truth, so this overwrites rather
+                # than preserving. That also repairs a secret that was mistyped
+                # into the cluster by hand.
+                oc create secret generic "$secret_name" -n "$NS" \
+                  --from-literal=clientId="$client_id" \
+                  --from-literal=clientSecret="$sec" \
+                  --from-literal=issuer="$ISSUER" \
+                  --dry-run=client -o yaml | oc apply -f - >/dev/null
+                oc label secret "$secret_name" -n "$NS" \
+                  demo.redhat.com/application=dify-enterprise --overwrite >/dev/null
+                echo "secret/$secret_name synced (${#sec} characters, not printed)"
+              }
+
+              register "$WORKSPACE_CLIENT" dify-sso-client           '-(console|app|enterprise)\.'
+              register "$DASHBOARD_CLIENT" dify-sso-dashboard-client '-enterprise\.'
+
+              echo
+              echo "Provider URL for Dify's OIDC form: $ISSUER"
+              echo "No client secret is in Git. To copy one to the clipboard:"
+              echo "  oc get secret dify-sso-client -n $NS -o jsonpath='{.data.clientSecret}' | base64 -d | pbcopy"
+{{- end }}

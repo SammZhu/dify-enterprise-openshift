@@ -1,0 +1,57 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.sso.enabled }}
+---
+# =============================================================================
+# Cross-namespace access into RHBK. Read this before enabling sso.enabled.
+# =============================================================================
+# The client-registration job talks to Keycloak's Admin API, which means it
+# needs the RHBK admin password - and that password lives in another namespace.
+# Granting this hands the Dify namespace the ability to read it.
+#
+# It is scoped as tightly as RBAC allows:
+#   - `secrets` is restricted with resourceNames to the ONE admin secret,
+#     so this does not open every secret in the Keycloak namespace
+#   - `routes` is read-only, and only to discover the Keycloak hostname
+#
+# That is still a real grant. Whoever can create a pod in the Dify namespace
+# can read the RHBK admin credential. For a PoC that is usually acceptable;
+# for production, invert it - have the platform team register the client and
+# deliver only the resulting Secret (External Secrets Operator, Vault, or a
+# one-time `oc create secret`), and leave sso.enabled false.
+#
+# The alternative of managing the client declaratively does not exist here:
+# RHBK 26.x ships only `Keycloak` and `KeycloakRealmImport` CRDs - there is no
+# KeycloakClient. A realm import would rewrite the whole realm, which on this
+# cluster also serves the cluster's own OAuth. Do not reach for it.
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dify-sso-registrar
+  namespace: {{ .Values.prereqs.sso.keycloakNamespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.prereqs.sso.adminSecretName | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-sso-registrar
+  namespace: {{ .Values.prereqs.sso.keycloakNamespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dify-sso-registrar
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.prereqs.serviceAccountName }}
+    namespace: {{ .Values.prereqs.namespace }}
+{{- end }}
