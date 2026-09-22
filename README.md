@@ -15,7 +15,9 @@ actually demonstrated: **[docs/why-openshift.md](docs/why-openshift.md)**. How D
 enterprise features meet the platform's:
 **[docs/enterprise-integration.md](docs/enterprise-integration.md)**. Wiring Dify's
 SSO to Red Hat build of Keycloak, including the two surfaces it exposes and the
-two things that cost real time: **[docs/sso-rhbk.md](docs/sso-rhbk.md)**.
+two things that cost real time: **[docs/sso-rhbk.md](docs/sso-rhbk.md)**. Dify's
+own telemetry scraped by the platform's Prometheus, no new operator required:
+**[docs/monitoring.md](docs/monitoring.md)**.
 
 ## What this is
 

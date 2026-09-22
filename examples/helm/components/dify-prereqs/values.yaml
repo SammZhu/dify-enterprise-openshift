@@ -43,6 +43,18 @@ prereqs:
     nonrootPriority: 20
     nonrootServiceAccounts:
       - dify-dify-enterprise-plugin-connector-sa
+  # Scrape the chart's OpenTelemetry collector with OpenShift's own Prometheus.
+  # Inert unless user workload monitoring is enabled cluster-side - see
+  # servicemonitor.yaml for the one command that does it.
+  monitoring:
+    enabled: true
+    # Labels on the chart-created collector Service. Chart/app version labels
+    # are deliberately not matched on; they change on every upgrade.
+    serviceNameLabel: dify-enterprise
+    releaseName: dify
+    collectorAppLabel: dify-dify-enterprise-enterprise-collector
+    portName: http-metrics
+    interval: 30s
   # SSO against Red Hat build of Keycloak. OFF by default, because turning it
   # on grants this namespace read access to the RHBK admin credential in
   # another namespace - see sso-keycloak-access.yaml for the full trade-off.

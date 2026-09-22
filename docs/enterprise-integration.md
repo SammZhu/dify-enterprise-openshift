@@ -29,9 +29,9 @@ external users**), Enterprise APIs, Audit log, Data push, Branding, and
 Settings (system users, two-step verification, login settings, password
 policy, license).
 
-State at the time of writing: License active, audit logging already recording,
-**SSO not yet configured**, system settings limited to a password policy and the
-tenant key pair.
+State: License active, audit logging already recording, **SSO wired to RHBK and
+verified** (see [docs/sso-rhbk.md](sso-rhbk.md)), telemetry scraped by the
+platform's Prometheus (see [docs/monitoring.md](monitoring.md)).
 
 ## 1. SSO to Red Hat build of Keycloak
 
@@ -95,9 +95,13 @@ OpenTelemetry, so this works on any Kubernetes.** What OpenShift contributes is
 that the receiving stack is a supported part of the platform rather than
 something else to run. That is an honest, and still useful, distinction.
 
-Not yet present on this cluster — the Cluster Observability, Tempo and
-OpenTelemetry operators are not installed. Only `openshift-monitoring` is
-active, so metrics have a home today and traces would need Tempo added.
+**Metrics are wired up as of 2026-09-22** — user workload monitoring enabled,
+a ServiceMonitor on port 8889, target `up`, and roughly 1800 series flowing
+into the platform's own Prometheus, labelled by tenant, application and model.
+See **[docs/monitoring.md](monitoring.md)**. No new operator was needed.
+
+Traces still are not: the Cluster Observability, Tempo and OpenTelemetry
+operators are not installed on this cluster.
 
 ## 4. Two identity planes, not one
 

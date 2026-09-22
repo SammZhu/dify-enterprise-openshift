@@ -1,0 +1,52 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.monitoring.enabled }}
+---
+# =============================================================================
+# Dify's telemetry into OpenShift's own monitoring stack.
+# =============================================================================
+# The chart already runs an OpenTelemetry collector and already exposes
+# Prometheus format on 8889 - roughly 1800 series, including the ones a
+# platform team actually wants:
+#
+#   dify_tokens_input_total / dify_tokens_output_total / dify_tokens_total
+#   dify_message_duration_seconds       dify_workflow_duration_seconds
+#   dify_requests_total                 dify_app_created_total
+#
+# No new operator is required. The one prerequisite is cluster-side and is NOT
+# managed here, because it belongs to the cluster rather than to this app:
+#
+#   oc -n openshift-monitoring create configmap cluster-monitoring-config \
+#     --from-literal=config.yaml='enableUserWorkload: true'
+#
+# Without it this object is simply inert - user-workload Prometheus is not
+# running, so nothing scrapes it and nothing errors.
+#
+# The label selector deliberately avoids `helm.sh/chart` and
+# `app.kubernetes.io/version`, which carry the chart and app versions and would
+# stop matching on the next upgrade.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dify-collector
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.prereqs.namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Values.prereqs.monitoring.serviceNameLabel }}
+      app.kubernetes.io/instance: {{ .Values.prereqs.monitoring.releaseName }}
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - {{ .Values.prereqs.monitoring.collectorAppLabel }}
+  endpoints:
+    - port: {{ .Values.prereqs.monitoring.portName }}
+      path: /metrics
+      interval: {{ .Values.prereqs.monitoring.interval }}
+      scheme: http
+{{- end }}
