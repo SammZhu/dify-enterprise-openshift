@@ -112,14 +112,22 @@ data:
       db: 0
 
     # --- Vector database ---------------------------------------------------
-    # 3.9.x defaults to useExternal:true + externalType:qdrant. If endpoint and
-    # apiKey are left at their defaults the api/worker pods WILL fail to start.
+    # externalQdrant is NESTED under vectorDB. Dify's documentation lists the
+    # two as separate top-level blocks, which is how this was first written -
+    # and a top-level externalQdrant is silently ignored, leaving the chart's
+    # placeholder default in place:
+    #
+    #   QDRANT_URL = http://your-qdrant-cluster-url.qdrant.tech/
+    #
+    # Nothing fails at install time. All 16 components come up healthy; the
+    # error only surfaces on the first document indexed, as a DNS failure
+    # several layers away from the cause.
     vectorDB:
       useExternal: true
       externalType: "qdrant"
-    externalQdrant:
-      endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
-      apiKey: "@@secret:dify-qdrant/apiKey@@"
+      externalQdrant:
+        endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
+        apiKey: "@@secret:dify-qdrant/apiKey@@"
 
     # --- Persistent storage: S3 (MinIO in-cluster) -------------------------
     persistence:

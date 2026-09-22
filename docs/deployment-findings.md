@@ -434,6 +434,53 @@ source:
 Until that repository URL and credentials are available, this stays a scripted
 manual step.
 
+## externalQdrant is nested, and getting it wrong fails silently
+
+The first document indexed failed with:
+
+```
+qdrant_client.http.exceptions.ResponseHandlingException:
+[Errno -2] Name or service not known
+```
+
+The cause, visible only from inside a worker:
+
+```
+QDRANT_URL = http://your-qdrant-cluster-url.qdrant.tech/
+```
+
+The chart's own placeholder. **`externalQdrant` belongs under `vectorDB`**, and
+a top-level one is silently ignored:
+
+```yaml
+vectorDB:
+  useExternal: true
+  externalType: qdrant
+  externalQdrant:          # nested — correct
+    endpoint: http://dify-qdrant.dify.svc.cluster.local:6333
+```
+
+Dify's Vector Database documentation presents the two as separate top-level
+blocks, which is how this was originally written. Helm does not object to an
+unrecognised top-level key, the install succeeds, all 16 components report
+healthy, and the fault stays hidden until the first document is indexed.
+
+**Embedding was working the whole time.** The plugin container's log shows all
+28 segments vectorised successfully:
+
+```
+POST /invoke?action=invoke_text_embedding  HTTP 200  ×28
+```
+
+The failure is one step later, writing those vectors to a vector database that
+does not exist. Worth noting because the symptom — an indexing job that dies
+with a DNS error — points naturally at the embedding model, which is the part
+that was fine.
+
+A useful tell: the retry failed in **0.19 seconds**. A wrong-but-real endpoint
+times out over seconds; instant failure means resolution never left the host,
+which narrows it to a hostname that is simply wrong.
+
 ## A failed query looks exactly like a missing resource
 
 After the cluster restarted, preflight produced this:
