@@ -11,7 +11,9 @@ nobody needs SCC administration — see
 **[docs/scc-requirements.md](docs/scc-requirements.md)**.
 
 Why OpenShift rather than plain Kubernetes, argued from what this deployment
-actually demonstrated: **[docs/why-openshift.md](docs/why-openshift.md)**.
+actually demonstrated: **[docs/why-openshift.md](docs/why-openshift.md)**. How Dify's
+enterprise features meet the platform's:
+**[docs/enterprise-integration.md](docs/enterprise-integration.md)**.
 
 ## What this is
 
