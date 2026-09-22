@@ -56,29 +56,28 @@ data:
         topKMaxValue: 10
         indexingMaxSegmentationTokensLength: 4000
 
-    # --- Ingress: OpenShift router, NOT ingress-nginx ----------------------
-    # The docs assume ingress-nginx. On OpenShift the HAProxy router converts
-    # Ingress objects into Routes, so the class and annotations both change.
+      # --- OpenShift mode ---------------------------------------------
+      # The chart has native OpenShift support: it creates Routes directly
+      # rather than relying on the router to convert Ingress objects. Turning
+      # this on is what produces the six edge-terminated Routes.
+      openshift:
+        enabled: true
+        routes:
+          enabled: true
+          tls:
+            termination: edge
+            insecureEdgeTerminationPolicy: Redirect
+          annotations:
+            # SSE / streaming responses die on the default 30s router timeout.
+            haproxy.router.openshift.io/timeout: "600s"
+            # Audit logs need the real client IP, not the router's.
+            haproxy.router.openshift.io/set-forwarded-headers: "append"
+
+    # Ingress off: with global.openshift.routes the chart creates Routes
+    # itself. Leaving both on exposes every hostname twice - an Ingress that
+    # the router converts, plus the chart's own Route for the same host.
     ingress:
-      enabled: true
-      className: "openshift-default"
-      annotations:
-        # SSE / streaming responses die on the default 30s router timeout.
-        haproxy.router.openshift.io/timeout: "600s"
-        # Audit logs need the real client IP.
-        haproxy.router.openshift.io/set-forwarded-headers: "append"
-      # No secretName: the router terminates with its default *.apps wildcard
-      # certificate, which already covers every host below.
-      # VERIFY on cluster - if the generated Routes come out insecure, create
-      # the 6 Routes manually as edge-terminated instead.
-      tls:
-        - hosts:
-            - "{{ $console }}"
-            - "{{ $api }}"
-            - "{{ $app }}"
-            - "{{ $upload }}"
-            - "{{ $ent }}"
-            - "{{ $trigger }}"
+      enabled: false
 
     # --- External PostgreSQL ----------------------------------------------
     # The dify / enterprise / audit databases are pre-created by the

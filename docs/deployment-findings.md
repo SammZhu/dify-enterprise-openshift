@@ -281,6 +281,59 @@ everything works. Only Helm's record of the release is wrong. Re-run with
 This will hit any chart on OpenShift that manages `imagePullSecrets`; it is not
 specific to Dify.
 
+## The chart has native OpenShift support
+
+The Dify team pointed out a values key we had not known about:
+
+```yaml
+global:
+  openshift:
+    enabled: true
+```
+
+It brings a whole section with it:
+
+```yaml
+global.openshift:
+  enabled: true
+  routes:
+    enabled: true
+    tls: {termination: edge, insecureEdgeTerminationPolicy: Redirect}
+```
+
+**The chart creates Routes directly.** It does not rely on the router
+converting Ingress objects, and `edge/Redirect` comes from this config rather
+than from any router default.
+
+### Correcting an earlier conclusion
+
+This document previously recorded "Ingress → Route conversion confirmed, six
+Routes came out edge-terminated on the router's wildcard certificate". That
+read the evidence backwards. The Routes were there and they were
+edge-terminated, but the chart had created them — the `ownerReferences` on
+every Route are empty, and a Route generated from an Ingress carries an owner
+reference back to it.
+
+The reasoning was plausible and the observation was correct; the causal claim
+was wrong. Nothing broke because of it, but the conclusion would have been
+wrong for anyone reusing it.
+
+### Both were on at once
+
+With `ingress.enabled: true` *and* `global.openshift.routes.enabled: true`,
+every hostname is exposed twice — an Ingress the router converts, plus the
+chart's own Route for the same host:
+
+```
+Ingress  dify-dify-enterprise-ingress    all six hosts
+Route    six, ownerReferences empty      the same six hosts
+```
+
+It worked only because both paths happened to resolve to the same Services.
+The rendered values now set `ingress.enabled: false` and put the router
+annotations (600s timeout, forwarded headers) under
+`global.openshift.routes.annotations` where they belong.
+
 ## Cluster-level permissions: what is actually required
 
 The Dify team asked for CRD management and SCC administration on their account.
@@ -451,9 +504,9 @@ empty, and discard a partial sample instead of diffing it.
 
 These need the Dify Enterprise chart, which is not yet in hand:
 
-- [x] **Ingress → Route: confirmed.** All six come out `edge/Redirect` on the
-      router's default wildcard certificate. `ingress.tls` with hosts and no
-      `secretName` is correct on OpenShift; no manual Routes needed.
+- [x] **Routes: the chart creates them natively.** See *The chart has native
+      OpenShift support* — this was initially misread as Ingress-to-Route
+      conversion.
 - [ ] `persistence.s3.addressType` — the value MinIO path-style addressing needs.
 - [x] **Kaniko plugin build: confirmed working.** Builds under `anyuid` and
       pushes to the internal registry. Needed one addition — the
