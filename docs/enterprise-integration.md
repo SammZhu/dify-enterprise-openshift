@@ -19,6 +19,15 @@ The enterprise schema is the clearest statement of the feature boundary:
 | Credential governance | `credentials`, `credential_policies`, `secret_keys` | A policy layer, not just storage |
 | Audit | `audit_logs`, `audit_resource_lookups`, `audit_oss_metadata` | The last one implies archival to object storage |
 | Plugin governance | `plugin_global_references`, `plugin_instance_configs` | Allow-listing and per-instance configuration |
+| Telemetry export | — (console: *Data Push*) | An OpenTelemetry collector, ports 4317/4318 |
+| Admin API | — (console: *Enterprise APIs*) | Programmatic tenant and member management |
+| Branding | — (console: *Branding*) | White-labelling |
+
+The admin console groups these as: Workspaces, Members, Plugin management,
+Credential management, Authentication (**split into member auth and web-app
+external users**), Enterprise APIs, Audit log, Data push, Branding, and
+Settings (system users, two-step verification, login settings, password
+policy, license).
 
 State at the time of writing: License active, audit logging already recording,
 **SSO not yet configured**, system settings limited to a password policy and the
@@ -62,7 +71,61 @@ logging stack puts them behind one query interface.
 *To confirm in the UI: whether audit entries can be filtered by resource type,
 which determines how they align with platform logs.*
 
-## 3. Plugin governance plus image scanning
+## 3. Telemetry: a standard OTLP collector, already running
+
+The console's *Data Push* page configures the `dify-ee-collector` component,
+and it is not a proprietary channel:
+
+```
+dify-dify-enterprise-enterprise-collector-svc   4317/TCP, 4318/TCP, 8889/TCP
+```
+
+4317 and 4318 are **standard OTLP gRPC and HTTP**; 8889 is a Prometheus scrape
+endpoint. Nothing needs translating.
+
+This is a stronger integration than audit forwarding, because it carries
+execution detail rather than a record of changes: how long a workflow took,
+which LLM call dominated it, what retrieval cost. Pointed at the platform's own
+stack — Tempo for traces, Prometheus for metrics — an AI workflow becomes
+observable with the same tooling as every other workload, instead of requiring
+a separate SaaS observability product.
+
+Worth stating plainly for a customer conversation: **Dify emits standard
+OpenTelemetry, so this works on any Kubernetes.** What OpenShift contributes is
+that the receiving stack is a supported part of the platform rather than
+something else to run. That is an honest, and still useful, distinction.
+
+Not yet present on this cluster — the Cluster Observability, Tempo and
+OpenTelemetry operators are not installed. Only `openshift-monitoring` is
+active, so metrics have a home today and traces would need Tempo added.
+
+## 4. Two identity planes, not one
+
+Authentication splits into **member authentication** and **web-app external
+users**, which reflects a real distinction: the people who build applications
+are not the people who use them.
+
+- **Members** — internal staff, the natural fit for RHBK with the group tree
+  mapped through
+- **Web-app external users** — whoever consumes a published application, and
+  possibly not in the corporate directory at all
+
+Keycloak handles both without a second product: a separate realm for external
+users, or identity brokering to a customer-facing provider. Deciding which
+plane an audience belongs to is worth doing before configuring either, because
+moving people between them later means re-establishing their access.
+
+## 5. Enterprise APIs: tenant provisioning as automation
+
+The admin API makes workspace and member management programmatic, which turns
+onboarding into something Ansible Automation Platform or a GitOps pipeline can
+own: a team requests access, a workspace is created with the right membership
+and quota, and the request is the audit record.
+
+For a multi-tenant AI platform this is usually the difference between a demo
+and something an operations team will accept.
+
+## 6. Plugin governance plus image scanning
 
 This combination is specific to OpenShift and is easy to overlook.
 
@@ -81,9 +144,7 @@ cluster** — from source to image to running pod. On a platform where plugins
 are built against an external registry, the scanning story has to be
 reconstructed separately.
 
-*To confirm in the UI: whether plugin allow-listing is global or per-workspace.*
-
-## 4. Credentials from an external source
+## 7. Credentials from an external source
 
 Dify stores model API keys with a policy layer (`credential_policies`).
 Production environments generally will not accept a pile of provider keys
@@ -95,8 +156,13 @@ Dify to change.
 
 1. **SSO** — about an hour, strongest demonstration, exercises the core
    enterprise claim
-2. **Audit forwarding** — the spine of the compliance narrative
-3. **Plugin image scanning** — the differentiator nobody else can show
+2. **Telemetry to Tempo/Prometheus** — standard OTLP, so the work is installing
+   the operators rather than building an adapter
+3. **Audit forwarding** — the spine of the compliance narrative
+4. **Plugin image scanning** — the differentiator nobody else can show
+
+The UI questions raised earlier are now answered by the console's own menu;
+what remains is configuring these, not discovering whether they exist.
 
 ## What this does not cover
 
