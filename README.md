@@ -13,7 +13,9 @@ nobody needs SCC administration — see
 Why OpenShift rather than plain Kubernetes, argued from what this deployment
 actually demonstrated: **[docs/why-openshift.md](docs/why-openshift.md)**. How Dify's
 enterprise features meet the platform's:
-**[docs/enterprise-integration.md](docs/enterprise-integration.md)**.
+**[docs/enterprise-integration.md](docs/enterprise-integration.md)**. Wiring Dify's
+SSO to Red Hat build of Keycloak, including the two surfaces it exposes and the
+two things that cost real time: **[docs/sso-rhbk.md](docs/sso-rhbk.md)**.
 
 ## What this is
 
