@@ -4,9 +4,11 @@ What actually happened bringing the dependency tier up on OpenShift 4.21.32
 (RHDP Field Sourced Content, CNV, GUID `dwm4j`). Written from live cluster
 behaviour, not from the docs.
 
-**Status: running.** All 16 Dify components are ready, every Service has
-endpoints, all six Routes answer, and the dependency tier passes 33 preflight
-checks. Every `langgenius` image in use is `3.9.8-ubi9` — entirely within the
+**Status: verified end to end.** All 16 Dify components run, a plugin builds
+in-cluster and pushes to the internal registry, and a document indexes through
+the full RAG chain — uploaded to MinIO, split into 28 segments, vectorised by
+the in-cluster embedder (768 dimensions, ~80ms per segment on CPU), and written
+to Qdrant. Every `langgenius` image in use is `3.9.8-ubi9` — entirely within the
 Red Hat certified set.
 
 The Helm release still reports `failed`; the deployment is fine, the
@@ -480,6 +482,34 @@ that was fine.
 A useful tell: the retry failed in **0.19 seconds**. A wrong-but-real endpoint
 times out over seconds; instant failure means resolution never left the host,
 which narrows it to a hostname that is simply wrong.
+
+### envFrom order: a Secret silently overrides a ConfigMap
+
+Fixing the endpoint was not enough. `QDRANT_API_KEY` stayed wrong even after
+the ConfigMap was patched correctly, because the workers load both:
+
+```
+envFrom:
+  - configMapRef: dify-...-shared-vectordb-config
+  - secretRef:    dify-...-shared-vectordb-secret     # later wins
+```
+
+Later entries override earlier ones, so the Secret's placeholder beat the
+corrected ConfigMap value. The ConfigMap looked right, the environment variable
+was wrong, and nothing connected the two.
+
+Comparing fingerprints is what exposed it — the value in use was 12 characters,
+the real key 32:
+
+```
+Secret dify-qdrant : len=32  fp=d952769f
+ConfigMap          : len=32  fp=d952769f   # patched correctly
+worker env         : len=12  fp=736114c0   # from somewhere else entirely
+```
+
+Worth doing whenever a credential "should" be right but is rejected: compare a
+hash of the value actually in the process against the source of truth, rather
+than checking the place you edited.
 
 ## A failed query looks exactly like a missing resource
 
