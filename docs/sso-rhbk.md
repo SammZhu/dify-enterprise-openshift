@@ -113,6 +113,33 @@ Check the realm before enabling it:
 On this realm `registrationAllowed` was `true`. Either leave auto-create off and
 pre-create the system user, or turn self-registration off first.
 
+## Verified
+
+Workspace SSO, end to end, on 2026-09-22:
+
+```
+14:33:52  account created
+14:39:01  joined Demo's Workspace
+14:39:31  User1 logged in    <- via Keycloak
+```
+
+**Do not check `accounts.last_login_at`.** The SSO path does not write it — it
+stayed null for the account that had just logged in, while the password path
+filled it in correctly for another account minutes later. Reading that column
+would tell you SSO had never worked. The audit database is the record:
+
+```bash
+oc exec -n dify dify-postgresql-0 -i -- \
+  bash -c 'psql -U "$POSTGRESQL_USER" -d audit -P pager=off' <<'SQL'
+SELECT operated_at, operator_name, operation_type, resource_type, ip_address
+FROM audit_logs ORDER BY operated_at DESC LIMIT 15;
+SQL
+```
+
+`operation_type 6` / `resource_type 4` is a login. The identity arrives from a
+cluster-internal address, because the code exchange is made by Dify's backend
+rather than the browser.
+
 ## Verifying without a browser
 
 The authorization request can be checked end to end without logging in:
