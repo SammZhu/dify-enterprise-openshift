@@ -1,0 +1,31 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.monitoring.enabled .Values.prereqs.monitoring.dashboard.enabled }}
+---
+# =============================================================================
+# A saved dashboard, so the queries do not have to be retyped.
+# =============================================================================
+# OpenShift's console reads Grafana dashboard JSON from ConfigMaps in
+# openshift-config-managed labelled console.openshift.io/dashboard=true, and
+# renders them under Observe -> Dashboards. No Grafana, no new operator.
+#
+# Note the namespace: this object does NOT live in the application's namespace.
+# The dashboard is a cluster-wide console artifact, so installing this chart
+# needs write access to openshift-config-managed. Set dashboard.enabled=false
+# if the installer does not have it - everything else still works, the queries
+# just have to be entered by hand.
+#
+# Every query in the JSON was run against live data before shipping: all 13
+# targets returned series. A dashboard of empty panels is worse than none,
+# because it reads as "the feature does not work".
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.prereqs.monitoring.dashboard.name }}
+  namespace: {{ .Values.prereqs.monitoring.dashboard.namespace }}
+  labels:
+    console.openshift.io/dashboard: "true"
+    demo.redhat.com/application: "dify-enterprise"
+data:
+  dify-enterprise.json: |
+{{ .Files.Get "dashboards/dify-enterprise.json" | indent 4 }}
+{{- end }}

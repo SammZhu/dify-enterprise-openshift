@@ -92,6 +92,28 @@ dify_message_duration_seconds  3 series
 Real accumulated traffic from the RAG application built on this cluster, not
 synthetic data.
 
+## Saved queries: a console dashboard
+
+Retyping PromQL into the query browser every time is not a workflow. OpenShift's
+console reads Grafana dashboard JSON from ConfigMaps in
+`openshift-config-managed` labelled `console.openshift.io/dashboard=true` and
+renders them under **Observe → Dashboards** — no Grafana, no new operator.
+
+`components/dify-prereqs/dashboards/dify-enterprise.json` ships eight panels:
+tokens by model, tokens by workspace, input vs output, requests by application,
+message latency p50/p95/p99, workflow latency, tokens by operation type, and
+applications created/deleted.
+
+Every one of its 13 targets was run against live data before shipping, and all
+13 returned series. That check matters more than it looks: a dashboard of empty
+panels does not read as "no traffic yet", it reads as "this integration does
+not work".
+
+Note where the ConfigMap lives — `openshift-config-managed`, not the
+application's namespace. A console dashboard is a cluster-wide artifact, so
+installing it needs write access there. `monitoring.dashboard.enabled=false`
+turns it off; everything else still works and the queries are in this document.
+
 ## Where to look at it
 
 There is no standalone Prometheus web UI. OpenShift removed it in 4.11 — on

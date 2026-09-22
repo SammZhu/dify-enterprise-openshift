@@ -55,6 +55,13 @@ prereqs:
     collectorAppLabel: dify-dify-enterprise-enterprise-collector
     portName: http-metrics
     interval: 30s
+    # Saved queries as a console dashboard (Observe -> Dashboards).
+    # Lives in openshift-config-managed, not in this namespace, so it needs
+    # write access there. Turn off if the installer does not have it.
+    dashboard:
+      enabled: true
+      name: dashboard-dify-enterprise
+      namespace: openshift-config-managed
   # SSO against Red Hat build of Keycloak. OFF by default, because turning it
   # on grants this namespace read access to the RHBK admin credential in
   # another namespace - see sso-keycloak-access.yaml for the full trade-off.
