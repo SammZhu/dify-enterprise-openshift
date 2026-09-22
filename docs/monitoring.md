@@ -92,6 +92,33 @@ dify_message_duration_seconds  3 series
 Real accumulated traffic from the RAG application built on this cluster, not
 synthetic data.
 
+## Where to look at it
+
+There is no standalone Prometheus web UI. OpenShift removed it in 4.11 — on
+4.21 both routes answer `/graph` with **503** while `/api/v1/query` returns
+200. The routes are API surfaces, not consoles.
+
+The console is the entry point: **Observe → Metrics**, with the project set to
+`dify`. User-workload metrics are not visible until the project is selected.
+**Observe → Targets** is where to look first when a scrape goes quiet.
+
+For programmatic access, query **thanos-querier**, not `prometheus-k8s`:
+
+```
+prometheus-k8s   dify_tokens_total -> 0 series
+thanos-querier   dify_tokens_total -> 4 series
+```
+
+`prometheus-k8s` is the platform Prometheus and does not hold these metrics at
+all; they live in the user-workload instance, and only thanos-querier federates
+both. Querying the wrong one returns HTTP 200 with an empty result, which reads
+as "the metric does not exist" rather than "you asked the wrong server".
+
+```bash
+curl -sk -H "Authorization: Bearer $(oc whoami -t)" \
+  "https://$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}')/api/v1/query?query=dify_tokens_total"
+```
+
 ## What is still missing
 
 Traces. 4317/4318 are standard OTLP, but nothing is receiving them — the
