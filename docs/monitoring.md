@@ -109,10 +109,38 @@ Every one of its 13 targets was run against live data before shipping, and all
 panels does not read as "no traffic yet", it reads as "this integration does
 not work".
 
-Note where the ConfigMap lives — `openshift-config-managed`, not the
-application's namespace. A console dashboard is a cluster-wide artifact, so
-installing it needs write access there. `monitoring.dashboard.enabled=false`
-turns it off; everything else still works and the queries are in this document.
+### Two gates that make it look like the dashboard was never created
+
+**It is in the Administrator perspective, not Developer.** Developer → Observe →
+Dashboards offers a fixed set of namespace-scoped Kubernetes panels and never
+reads `openshift-config-managed`. The custom dashboard only appears under
+Administrator → Observe → Dashboards. Nothing warns about this — the page looks
+complete, just without your dashboard in the list.
+
+**A regular user cannot see it at all.** The monitoring plugin lists ConfigMaps
+in `openshift-config-managed` by label, so the viewer needs `list` on that
+namespace:
+
+```
+user1  list configmaps -n openshift-config-managed -> no
+admin                                              -> yes
+```
+
+`resourceNames` cannot narrow a `list`, so making it visible to non-admins
+means granting read of all 46 ConfigMaps in that namespace. They are dashboards
+and public CA bundles rather than secrets, but it is a broader grant than it
+first appears. Decide deliberately; admin-only is a defensible default.
+
+Note also where the ConfigMap lives — not the application's namespace. A
+console dashboard is a cluster-wide artifact, so installing it needs write
+access there. `monitoring.dashboard.enabled=false` turns it off; everything
+else still works and the queries are in this document.
+
+The JSON is derived from `dashboard-cluster-total`, a dashboard proven to
+render on this console build: same `schemaVersion`, same top-level fields, a
+leading `row` panel, and no stray empty `rows` key. Writing the JSON from
+scratch is how you spend an afternoon on a dashboard that silently never
+appears.
 
 ## Where to look at it
 
