@@ -10,6 +10,9 @@ requirement is *one CRD, installed once*. No component runs `privileged` and
 nobody needs SCC administration — see
 **[docs/scc-requirements.md](docs/scc-requirements.md)**.
 
+Why OpenShift rather than plain Kubernetes, argued from what this deployment
+actually demonstrated: **[docs/why-openshift.md](docs/why-openshift.md)**.
+
 ## What this is
 
 Dify Enterprise is [Partner Validated on OpenShift](https://catalog.redhat.com/en/software/container-stacks/detail/69fc3bfc14f7cd2916ffd595)
