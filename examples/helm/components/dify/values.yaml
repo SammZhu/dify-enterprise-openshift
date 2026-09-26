@@ -31,3 +31,10 @@ litemaas:
   apiUrl: ""
   apiKey: ""
   model: ""
+
+# Passed in by the App-of-Apps; these defaults only matter for standalone renders.
+objectStorage:
+  enabled: true
+  claimName: dify-objectstorage
+  bucketName: ""
+  endpoint: http://s3.openshift-storage.svc:80

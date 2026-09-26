@@ -1,0 +1,8 @@
+objectStorage:
+  namespace: dify
+  claimName: dify-objectstorage
+  storageClassName: openshift-storage.noobaa.io
+  # Empty = "dify-<namespace>". MCG bucket names are unique per cluster, and a
+  # fixed name keeps it a static value in dify-values rather than something to
+  # resolve at install time.
+  bucketName: ""

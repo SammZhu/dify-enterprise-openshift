@@ -1,0 +1,32 @@
+{{- $ns := .Values.objectStorage.namespace }}
+---
+# =============================================================================
+# Object storage from the platform, not from a container image.
+# =============================================================================
+# This replaced an in-cluster MinIO. On 2026-09-26 the MinIO pod was rescheduled
+# and could not start: quay.io/minio/minio:latest now answers `unauthorized`,
+# and docker.io/minio/minio `denied` - community images are no longer public.
+# The deployment had only been running on a node that still held the image in
+# its cache.
+#
+# NooBaa (ODF's Multicloud Object Gateway) provisions the bucket and writes
+# the connection details beside this claim:
+#   ConfigMap dify-objectstorage  BUCKET_HOST / BUCKET_PORT / BUCKET_NAME
+#   Secret    dify-objectstorage  AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+# dify-values references the Secret through @@secret:..@@ placeholders, so the
+# credential never appears in Git.
+#
+# Endpoint: http://s3.openshift-storage.svc:80. The claim reports port 443, but
+# that listener presents a service-CA certificate Dify's S3 clients do not
+# trust; inside the cluster the plain listener avoids that entirely.
+# =============================================================================
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: {{ .Values.objectStorage.claimName }}
+  namespace: {{ $ns }}
+  labels:
+    demo.redhat.com/application: dify-enterprise
+spec:
+  storageClassName: {{ .Values.objectStorage.storageClassName }}
+  bucketName: {{ .Values.objectStorage.bucketName | default (printf "dify-%s" $ns) }}

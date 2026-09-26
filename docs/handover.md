@@ -30,12 +30,39 @@ queried, Redis pinged, the bucket listed, the embedder asked for a real vector.
 | PostgreSQL 16 | `dify-postgresql.dify.svc:5432` | `dify`, `enterprise`, `audit` **already created** |
 | Redis 7 | `dify-redis.dify.svc:6379` | password-protected |
 | Qdrant | `dify-qdrant.dify.svc:6333` | API key set |
-| MinIO (S3) | `dify-minio.dify.svc:9000` | bucket `dify` created |
+| Object storage (S3) | `s3.openshift-storage.svc:80` (ODF MCG) | bucket `dify-dify`; was MinIO until 2026-09-26 |
 | Embedder | `dify-embedder.dify.svc:11434/v1` | `nomic-embed-text`, **768 dims**, OpenAI-compatible |
 | Chat model | LiteMaaS | `gpt-oss-120b`, tool calling supported |
 
 Credentials are in Secrets in the `dify` namespace. **You do not need to look
 them up** — see the next section.
+
+## Changed on 2026-09-26 — read before the next `helm upgrade`
+
+Two things changed under the running installation. Both are already applied to
+the chart's generated Secrets and ConfigMaps, so everything works now — but
+**Helm's stored values are stale**.
+
+1. **Every data-tier credential was rotated** (PostgreSQL, Redis, Qdrant, object
+   storage). They had been exposed; the old values are now rejected.
+2. **Object storage moved from MinIO to ODF's Multicloud Object Gateway.** MinIO's
+   community images are no longer public and the pod could not be rescheduled.
+   All 15 objects were copied and verified byte-for-byte, including the tenant
+   private key.
+
+So before any `helm upgrade`, **re-render the values**:
+
+```bash
+./scripts/render-dify-values.sh dify > dify-values.yaml
+helm upgrade dify <chart> -n dify -f dify-values.yaml --force
+```
+
+**Do not use `--reuse-values`.** It would write the old, now-rejected credentials
+and the old MinIO endpoint back into the chart's Secrets, and Dify would lose its
+database, Redis, vector store and file storage at once.
+
+One thing to look at on your side: `dify-dify-enterprise-plugin-daemon-debug-svc`
+is a NodePort (32489), exposing a debug port on every node.
 
 ## Installing
 

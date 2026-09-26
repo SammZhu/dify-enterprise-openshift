@@ -1,0 +1,5 @@
+apiVersion: v2
+name: objectstorage
+description: Dify's S3 storage from the platform - an ObjectBucketClaim on OpenShift Data Foundation's Multicloud Object Gateway
+type: application
+version: 0.1.0

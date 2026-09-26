@@ -140,8 +140,23 @@ components:
   # --- MinIO: S3-compatible endpoint for Dify persistent storage -----------
   # Swap for real AWS S3 (or ODF) by disabling this and pointing
   # components.dify.storage.* at the external endpoint.
-  minio:
+  # --- Object storage (S3) --------------------------------------------------
+  # From the platform: an ObjectBucketClaim on ODF's Multicloud Object Gateway.
+  # Needs ODF with MCG (storage class openshift-storage.noobaa.io).
+  objectStorage:
     enabled: true
+    claimName: dify-objectstorage
+    storageClassName: openshift-storage.noobaa.io
+    bucketName: ""          # empty = dify-<namespace>
+    endpoint: http://s3.openshift-storage.svc:80
+
+  # --- MinIO (disabled) -------------------------------------------------------
+  # Kept only for clusters without ODF. Its community images are no longer
+  # public: quay.io/minio/minio answers `unauthorized`, docker.io/minio/minio
+  # `denied` (checked 2026-09-26). Enabling this needs an image you mirror
+  # yourself - set `image` and `mcImage` to it - and objectStorage.enabled=false.
+  minio:
+    enabled: false
     image: quay.io/minio/minio:latest
     mcImage: quay.io/minio/mc:latest
     bucket: dify

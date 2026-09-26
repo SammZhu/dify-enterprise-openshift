@@ -3,7 +3,7 @@
 # =============================================================================
 # Sync waves order the rollout:
 #   0  prereqs    - SCC bindings / ServiceAccount / RBAC must exist first
-#   1  data tier  - PostgreSQL, Redis, Qdrant, MinIO
+#   1  data tier  - PostgreSQL, Redis, Qdrant, object storage (MCG)
 #   2  dify       - Dify Enterprise itself
 #   3  tracing    - optional: Tempo + a platform-owned OTel collector
 # =============================================================================
@@ -219,6 +219,47 @@ spec:
       - CreateNamespace=true
 {{- end }}
 
+{{- if .Values.components.objectStorage.enabled }}
+---
+# S3 storage from ODF's Multicloud Object Gateway. sync-wave 1 with the rest of
+# the data tier: the bucket must exist before Dify starts.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-objectstorage
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/objectstorage
+    helm:
+      valuesObject:
+        objectStorage:
+          namespace: {{ $common.ns }}
+          claimName: {{ .Values.components.objectStorage.claimName }}
+          storageClassName: {{ .Values.components.objectStorage.storageClassName }}
+          bucketName: {{ .Values.components.objectStorage.bucketName | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      # Never prune the bucket claim: deleting it deletes the bucket and every
+      # file Dify stored - uploads, plugin packages, the tenant private keys.
+      prune: false
+      selfHeal: {{ not $.Values.collaborationMode }}
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
 {{- if .Values.components.minio.enabled }}
 ---
 apiVersion: argoproj.io/v1alpha1
@@ -333,6 +374,8 @@ spec:
 {{ toYaml .Values.components.qdrant | indent 10 }}
         minio:
 {{ toYaml .Values.components.minio | indent 10 }}
+        objectStorage:
+{{ toYaml .Values.components.objectStorage | indent 10 }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ $common.ns }}

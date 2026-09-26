@@ -65,7 +65,7 @@ an application-level record cannot show that someone widened an SCC, and a
 platform-level record cannot show that someone exported a dataset.
 
 `audit_oss_metadata` indicates Dify can archive audit data to object storage,
-and MinIO (or ODF) is already there. Forwarding both streams into the cluster
+and ODF's object gateway is already there. Forwarding both streams into the cluster
 logging stack puts them behind one query interface.
 
 *To confirm in the UI: whether audit entries can be filtered by resource type,

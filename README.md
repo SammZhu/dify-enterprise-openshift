@@ -35,7 +35,8 @@ It does **not** ship the data tier. This repo provides everything else:
 | `postgresql` | PostgreSQL 16 + **pre-created `dify` / `enterprise` / `audit` databases** | Dify requires 14+ and will not start unless those three databases already exist |
 | `redis` | Redis 7 | Dify requires 6+ |
 | `qdrant` | Qdrant | The vector DB Dify officially recommends; its support list is very short |
-| `minio` | MinIO + bucket bootstrap | Provides the S3-compatible endpoint Dify requires |
+| `objectstorage` | ObjectBucketClaim on ODF's Multicloud Object Gateway | The S3 endpoint Dify requires, from the platform. Replaced MinIO, whose community images stopped being public — see [deployment-findings](docs/deployment-findings.md) |
+| `minio` | MinIO + bucket bootstrap | **Disabled.** Kept for clusters without ODF; needs an image you mirror yourself |
 | `embedder` | `nomic-embed-text` on CPU, OpenAI-compatible | A LiteMaaS key serves only the one model ordered, so RAG had no embedder |
 | `plugin-crds` | The `DifyPlugin` CRD | CRD-driven plugin system; the CRD is not in the certified image set |
 | `dify` | Renders a cluster-ready `dify-values.yaml` | See below |
@@ -106,7 +107,7 @@ manages `imagePullSecrets`, not just Dify's.
 
 Verifies behaviour rather than object existence — a Running pod is not a working
 database. It queries PostgreSQL for the three databases Dify requires, pings
-Redis, asks MinIO for its bucket, confirms every `@@secret@@` placeholder
+Redis, probes the object store for its bucket, confirms every `@@secret@@` placeholder
 resolves, and calls the LiteMaaS endpoint with both a chat model and the
 embedder. Each failure prints the command to run next. Exit code is non-zero
 until everything passes.
@@ -116,7 +117,7 @@ embedding call does not, the key is scoped to a single model and a second key is
 needed before RAG can work.
 
 `--fix` creates what is safely creatable and genuinely missing — the credential
-secrets, the three databases, the MinIO bucket, `image-repo-secret` — and asks
+secrets, the three databases, the MinIO bucket (MinIO mode only), `image-repo-secret` — and asks
 ArgoCD to re-sync when objects are absent because GitOps has not run. It then
 re-runs the checks, so the result reflects the repaired state rather than the
 repair attempt.
@@ -145,8 +146,8 @@ Re-run it after an environment rebuild.
 
 **No credential is stored in this repository, generated or otherwise.**
 
-A PreSync job in `dify-prereqs` generates the PostgreSQL, Redis, Qdrant and
-MinIO credentials on the cluster and writes them into Secrets. It is idempotent:
+A job in `dify-prereqs` generates the PostgreSQL, Redis, Qdrant and
+MinIO credentials on the cluster (the object store's come from its bucket claim) and writes them into Secrets. It is idempotent:
 an existing Secret is left untouched, so re-syncing never rotates a password out
 from under a running database. To use your own values instead, create the
 Secrets before the first sync.
@@ -183,7 +184,7 @@ deployment is captured and Git is genuinely the source of truth again.
 
 | Who | What |
 |---|---|
-| This repo / GitOps | Namespace, SCC and RBAC, PostgreSQL (with the three databases), Redis, Qdrant, MinIO — the dependencies in place before anyone starts |
+| This repo / GitOps | Namespace, SCC and RBAC, PostgreSQL (with the three databases), Redis, Qdrant, object storage — the dependencies in place before anyone starts |
 | Dify engineers | The commercial `dify-enterprise` chart, License activation, and the values that actually work |
 | Capture | `scripts/capture-deployment.sh` turns their result back into repo content |
 
@@ -272,8 +273,8 @@ Answered along the way, recorded in
 
 Still open:
 
-- [ ] `persistence.s3.addressType` — whether MinIO needs path-style addressing.
-      Nothing has failed on file upload, so probably not, but it is untested.
+- [x] `persistence.s3.addressType` — path-style and `auto` both verified against
+      MCG with Dify's own storage module (write, read, delete).
 - [ ] Is a 600s router timeout enough for streaming under load?
 - [ ] License activation on a short-lived environment — re-activatable after a
       rebuild?
@@ -281,9 +282,9 @@ Still open:
       sandbox, which is unused but would be silently fallen back to if the
       sandbox ever asked for more.
 
-## Swapping MinIO for real S3 / ECR
+## Swapping the object store for AWS S3 / ECR
 
-Disable `components.minio`, then point `persistence.s3.*` at the external
+Disable `components.objectStorage`, then point `persistence.s3.*` at the external
 endpoint and set `plugin_connector.imageRepoType: ecr` with `ecrRegion`. Both
 are on Dify's officially supported list, which matters more for a customer-facing
 deployment than for a demo.

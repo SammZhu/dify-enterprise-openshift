@@ -129,17 +129,30 @@ data:
         endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
         apiKey: "@@secret:dify-qdrant/apiKey@@"
 
-    # --- Persistent storage: S3 (MinIO in-cluster) -------------------------
+    # --- Persistent storage: S3 ------------------------------------------
+    # Default: ODF's Multicloud Object Gateway through an ObjectBucketClaim
+    # (components/objectstorage). The bucket holds uploads, plugin packages and
+    # the tenant private keys that decrypt model-provider credentials - losing
+    # it means re-entering every provider key.
     persistence:
       type: "s3"
       s3:
+{{- if .Values.objectStorage.enabled }}
+        endpoint: "{{ .Values.objectStorage.endpoint }}"
+        accessKey: "@@secret:{{ .Values.objectStorage.claimName }}/AWS_ACCESS_KEY_ID@@"
+        secretKey: "@@secret:{{ .Values.objectStorage.claimName }}/AWS_SECRET_ACCESS_KEY@@"
+        region: "us-east-1"
+        bucketName: "{{ .Values.objectStorage.bucketName | default (printf "dify-%s" $ns) }}"
+{{- else }}
+        # MinIO needs an image you mirror yourself; see values.yaml.
         endpoint: "http://dify-minio.{{ $ns }}.svc.cluster.local:9000"
         accessKey: "@@secret:dify-minio/accessKey@@"
         secretKey: "@@secret:dify-minio/secretKey@@"
         region: "us-east-1"
         bucketName: "@@secret:dify-minio/bucket@@"
-        # VERIFY: MinIO needs path-style addressing. Confirm the accepted
-        # values for this field against `helm show values dify/dify`.
+{{- end }}
+        # Path-style works for both. The chart already renders
+        # S3_USE_PATH_STYLE=true for the plugin daemon and audit service.
         addressType: ""
         useAwsManagedIam: false
         useAwsS3: false

@@ -5,7 +5,7 @@
 #
 # Verifies behaviour, not object existence: a Running pod is not a working
 # database. PostgreSQL is queried for the three databases Dify requires, Redis
-# is pinged, MinIO is asked for its bucket.
+# is pinged, the object store is asked for its bucket.
 #
 # Usage:
 #   ./scripts/preflight-check.sh [namespace]          # read-only diagnosis
@@ -182,8 +182,15 @@ else r "No SCC RoleBinding - Dify requires pods to run as root"; fixable "GitOps
 
 sec "Credentials (generated on-cluster, never in Git)"
 MISSING_SECRET=0
+# Object storage is ODF's MCG unless an in-cluster MinIO is deployed instead.
+if oc get statefulset dify-minio -n "$NS" >/dev/null 2>&1 \
+   && ! oc get objectbucketclaim dify-objectstorage -n "$NS" >/dev/null 2>&1; then
+  STORAGE_MODE=minio; STORAGE_SECRET="dify-minio:accessKey,bucket,secretKey"
+else
+  STORAGE_MODE=mcg;   STORAGE_SECRET="dify-objectstorage:AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY"
+fi
 for spec in "dify-postgresql:database,password,username" "dify-redis:password" \
-            "dify-qdrant:apiKey" "dify-minio:accessKey,bucket,secretKey"; do
+            "dify-qdrant:apiKey" "$STORAGE_SECRET"; do
   name="${spec%%:*}"; want="${spec#*:}"
   got="$(oc get secret "$name" -n "$NS" -o go-template='{{range $k,$v := .data}}{{$k}},{{end}}' 2>/dev/null \
          | tr ',' '\n' | sort | paste -sd, - | sed 's/,$//')"
@@ -230,7 +237,28 @@ else
   hint "oc logs -n $NS dify-qdrant-0"
 fi
 
-if [ "$(ready dify-minio-0)" = "True" ]; then
+if [ "$STORAGE_MODE" = "mcg" ]; then
+  # Behaviour, not existence: an anonymous HEAD answers 403 for a bucket that
+  # exists (no credentials) and 404 for one that does not - no key needed.
+  OBC_PHASE="$(oc get objectbucketclaim dify-objectstorage -n "$NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
+  BUCKET="$(oc get configmap dify-objectstorage -n "$NS" -o jsonpath='{.data.BUCKET_NAME}' 2>/dev/null)"
+  if [ "$OBC_PHASE" = "Bound" ] && [ -n "$BUCKET" ]; then
+    g "ObjectBucketClaim dify-objectstorage Bound (bucket '$BUCKET')"
+    CODE="$(oc exec -n "$NS" dify-postgresql-0 -- curl -s -o /dev/null -w '%{http_code}' -I --max-time 10 \
+            "http://s3.openshift-storage.svc/$BUCKET" 2>/dev/null)"
+    case "$CODE" in
+      403) g "  bucket reachable at s3.openshift-storage.svc (HEAD without credentials -> 403, i.e. exists)";;
+      404) r "  bucket '$BUCKET' does not exist on the gateway although the claim is Bound";;
+      *)   y "  could not probe the bucket (HTTP ${CODE:-none}) - from dify-postgresql-0";;
+    esac
+  elif ! oc get storageclass openshift-storage.noobaa.io >/dev/null 2>&1; then
+    r "No object storage: no MCG storage class (openshift-storage.noobaa.io) and no MinIO"
+    hint "install ODF with the Multicloud Object Gateway, or see values.yaml for the MinIO fallback"
+  else
+    r "ObjectBucketClaim dify-objectstorage ${OBC_PHASE:-missing}"
+    fixable "GitOps has not synced" fix_argo_refresh
+  fi
+elif [ "$(ready dify-minio-0)" = "True" ]; then
   g "MinIO pod Ready (readiness probe = HTTP /minio/health/ready)"
   BUCKET="$(oc get secret dify-minio -n "$NS" -o jsonpath='{.data.bucket}' 2>/dev/null | base64 -d 2>/dev/null)"
   if [ -n "$BUCKET" ]; then
@@ -246,6 +274,7 @@ if [ "$(ready dify-minio-0)" = "True" ]; then
   fi
 else
   r "MinIO pod not Ready"; hint "oc logs -n $NS dify-minio-0"
+  hint "quay.io/minio/minio is no longer public; an unmirrored image cannot be pulled"
 fi
 
 PVC_TOTAL="$(oc get pvc -n "$NS" --no-headers 2>/dev/null | wc -l | tr -d ' ')"

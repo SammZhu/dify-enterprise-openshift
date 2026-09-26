@@ -659,6 +659,80 @@ It is outside this repository's control and worth raising with Dify. It also
 surfaced in a debugging session here: a masking rule written for
 `password: <value>` did not catch the credential embedded in a URL.
 
+## MinIO's community images stopped being public
+
+On 2026-09-26 the MinIO pod was restarted and could not come back:
+
+```
+quay.io/minio/minio:latest   reading manifest latest: unauthorized
+docker.io/minio/minio:latest pull access denied
+quay.io/minio/mc:latest      unauthorized   (the bucket bootstrap job)
+```
+
+It had been running for six days only because the node it started on still
+held the image. The pull policy was `IfNotPresent`, so nothing re-checked the
+registry until the pod moved. **Any fresh install from this repository would
+have failed at the data tier.**
+
+The replacement is ODF's Multicloud Object Gateway through an
+ObjectBucketClaim (`components/objectstorage`) — a Red Hat-supported component
+that was already running on the cluster, and one less third-party image. The
+live cutover:
+
+- 15 objects copied and each read back and compared by SHA-256. One of them is
+  `privkeys/<tenant>/private.pem`, the key that decrypts every model-provider
+  credential Dify holds — losing it means re-entering them all.
+- Access keys replaced by value; bucket names replaced **by config key only**.
+  `dify` is a substring of half the namespace, and a global replace of it would
+  have been a disaster.
+- Four components read the endpoint from `shared-storage-config`; the plugin
+  connector has it written into its own `config.yaml`, twice. A component with
+  no endpoint configured would have fallen back to AWS silently.
+- Verified with Dify's own storage module in the API pod: the configuration it
+  loads, a read of the private key, and a write/read/delete.
+
+While the image was unpullable, the pod was kept alive by copying the image out
+of that node's cache into the internal registry and pinning the StatefulSet to
+it by digest — which works from any node.
+
+## ArgoCD reverts hand patches on every new commit, selfHeal or not
+
+`collaborationMode` turns off `selfHeal` and `prune`. It does not turn off
+automated sync, and automated sync fires on **every new revision of the
+branch**. A force-push to rewrite history was a new revision: every
+Application re-synced, and the MinIO StatefulSet was put back on the image that
+could not be pulled. It survived only because the new pod happened to land on
+the one node with a cached copy.
+
+It also left the MinIO Application stuck: its PostSync hook (the bucket job)
+could not pull its image, so the sync operation never finished and blocked
+every later sync of that Application. Recovery was the same as the PreSync
+deadlock on day one — remove `.operation` from the Application and the stuck
+Job.
+
+The rule it implies: while anything is patched by hand, **do not push to the
+tracked branch**. Fix the repository first; the next commit will apply it.
+
+## Rotating credentials the chart has copied everywhere
+
+The four data-tier credentials had been exposed (see the git history rewrite in
+the commit log). Rotating them meant finding every copy. The chart fans each
+one out:
+
+- **30 Secret keys** — four source Secrets and 26 derived copies
+- **6 ConfigMaps, in plaintext**: three `MQ_REDIS_DSN`, `REDIS_DSN`, the
+  gateway's **`Caddyfile`**, and `shared-vectordb-config/QDRANT_API_KEY`
+- **0** database rows (all four databases dumped and searched)
+
+They were found by searching for the *values*, not for key names: a
+credential embedded in a DSN or a Caddyfile has no key called `password`. The
+same search then did the replacement — old value to new, wherever it occurs —
+after a dry run that listed exactly the 36 locations.
+
+Proof it worked is two-sided: each service **accepts the new credential and
+rejects the old one**, tested from the API pod. And Helm's stored values are
+now stale — see [handover.md](handover.md) before the next upgrade.
+
 ## Confirmed working
 
 - `anyuid` is sufficient for the dependency tier. Whether Dify's own sandbox and

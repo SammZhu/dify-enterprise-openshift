@@ -39,7 +39,7 @@ for Dify 3.9.8. Nothing will visibly break; the claim that this is a validated
 combination simply stops being true.
 
 **Single Node OpenShift.** On this catalog item SNO is not sized like the Open
-Environment one. PostgreSQL, Redis, Qdrant and MinIO all run in-cluster here —
+Environment one. PostgreSQL, Redis and Qdrant run in-cluster here, and object storage comes from ODF's gateway —
 Dify's own "1 worker × 4C/16G" baseline counts Dify alone and assumes the data
 tier is external.
 
