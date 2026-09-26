@@ -69,17 +69,31 @@ Where the running environment and the repository differ, and why:
 | Object | State | Why | Rebuild / action |
 |---|---|---|---|
 | `cluster-monitoring-config` | Created by hand | Cluster-owned; deliberately not in an app chart | `oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'` |
-| Logging stack (2 operators, LokiStack, forwarder, UIPlugin, RBAC, bucket) | Applied by hand | Built interactively; `components/logging` was written from it | Rendered and compared with `oc diff`: 13 of 13 existing objects identical apart from ArgoCD annotations; the secret-composing Job run live produced a byte-identical Secret. Set `components.logging.enabled: true` to have GitOps adopt it |
-| Tracing stack (3 operators, Tempo, collector, UIPlugin, RBAC) | Applied by hand | Built interactively; `components/tracing` was written from it | `components/tracing` reproduces it — rendered and compared with `oc diff`, identical apart from ArgoCD annotations. Set `components.tracing.enabled: true` to have GitOps adopt it |
 | RHBK clients and `dify-sso-*` Secrets | Script | Secrets must not be in Git; the client lives in another namespace | `scripts/create-sso-client.sh workspace` / `dashboard` |
 | `image-repo-secret` | Script | Holds a registry token | `scripts/create-image-repo-secret.sh` |
 | ImageStream `dify/minio` | By hand | A rescue copy of the MinIO image, taken from a node's cache when the registry stopped serving it | Unused since the move to MCG. Safe to delete |
-| StatefulSet `dify-minio` (0 replicas) + PVC `data-dify-minio-0` | Orphaned | Its ArgoCD Application was removed; the object still carries the old tracking annotation | Kept as a rollback copy until the environment is destroyed |
+| StatefulSet `dify-minio` (0 replicas), Service `dify-minio`, PVC `data-dify-minio-0` | Orphaned | Its ArgoCD Application was removed; the object still carries the old tracking annotation | Kept as a rollback copy until the environment is destroyed |
+| Secret `dify-minio` | Created with `kubectl` | MinIO's root credentials | Nothing mounts it since the move to MCG. Delete together with the StatefulSet |
 | `plugin-daemon-config` OTLP endpoints (`:4318`) | Patched by hand | The chart sends the daemon's telemetry to the gRPC port and every export fails; not a chart value | `helm upgrade` reverts it — run `scripts/fix-plugin-daemon-otlp.sh` after each upgrade |
 | `OTEL_SAMPLING_RATE=1.0` in five ConfigMaps | Patched by hand | Chart default is 0.2 | Also in `dify-values` (`components.dify.otel.samplingRate`); a re-rendered upgrade keeps it |
 | Redis list `trigger_refresh_publisher` (~1 message/min, 3.0 MB on 09-26) | Growing | Upstream: a beat task on a queue no worker consumes | Deliberately left; see handover.md item 13 |
 | RoleBinding `dify-dify-enterprise-sandbox-privileged` | From Dify's chart | Its SCC templates bind `privileged` to the sandbox | Unused — the sandbox runs under `dify-sandbox` — but a silent fallback if the sandbox ever asks for more. Ask Dify to disable their SCC templates |
 | Service `plugin-daemon-debug-svc`, NodePort 32489 | From Dify's chart | A debug port on every node | Raise with Dify |
+
+**Tracing and logging were adopted by GitOps on 2026-09-26.** Both stacks
+were built by hand first, and their components written from them. Before the
+defaults were turned on, all 32 objects the two components render were compared
+with the live ones by `oc diff` — identical apart from ArgoCD's annotations. After
+the sync, 31 of 32 kept their uid, i.e. ArgoCD took them over rather than
+recreating them. Two side effects, both expected and harmless:
+
+- The `loki-s3-secret` Job is recreated on every sync (`Force=true,Replace=true`;
+  a completed Job cannot be patched). It rewrites `logging-loki-s3` with the same
+  content — the log says `unchanged`.
+- The OpenTelemetry operator copies the collector CR's annotations onto its pod
+  template, so ArgoCD adding its tracking annotation rolled the collector once.
+  Traces and logs kept arriving: 100 traces and 415 log lines within two
+  minutes of the restart.
 
 ## Configuration that lives in Dify's database, not in Kubernetes
 
