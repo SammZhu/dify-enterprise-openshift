@@ -92,10 +92,27 @@ Instrumentation is standard OpenTelemetry auto-instrumentation — spans carry
 
 Worth stating plainly in front of a customer:
 
+0. **Only one request in five is traced.** Dify's chart defaults
+   `global.otel.samplingRate` to `0.2`, rendered as `OTEL_SAMPLING_RATE=0.2`
+   into five ConfigMaps (api, worker, worker-beat, trigger-worker, plugin
+   daemon). This looked like a regression at first: after a restart, two
+   knowledge-base questions produced no retrieval trace while Qdrant's access
+   log showed both searches succeeding. Neither had been sampled. **For a demo,
+   ask the question two or three times, or raise the rate** (`1.0` traces every
+   request, at a cost in overhead that is a production decision). Metrics are
+   not sampled — they are counters.
+
+   The reliable evidence that a retrieval happened is **Qdrant's own access
+   log** (`oc logs sts/dify-qdrant | grep points/search`), not the trace and not
+   Dify's `dataset_retriever_resources` table, both of which missed searches
+   that the log shows returning HTTP 200.
+
 1. **One conversation is several unconnected traces.** Retrieval is one trace,
    the LLM call another. Dify streams the generation from a separate thread and
    the trace context does not follow it, so there is no single waterfall of
    "5 s = 0.3 s retrieval + 4.5 s model". The pieces have to be lined up by time.
+   The API logs the mechanism itself as `Failed to detach context` at ERROR
+   severity, once per streamed answer.
 2. **The model call is a black box past the plugin daemon.** The daemon does
    not export traces, so the hop to the model provider is invisible. The span
    measured ~1 s while the recorded model latency was 4–5 s; the likeliest

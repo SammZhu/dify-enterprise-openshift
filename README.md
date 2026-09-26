@@ -20,6 +20,11 @@ own telemetry scraped by the platform's Prometheus, no new operator required:
 **[docs/monitoring.md](docs/monitoring.md)**. Traces in OpenShift's own tracing
 stack, and what they do and do not show: **[docs/tracing.md](docs/tracing.md)**.
 
+**Everything this puts on OpenShift** — every component, setting and object, what
+a cluster administrator is asked to approve, which parts arrive from GitOps and
+which by hand, and how deep metrics, traces, logs and alerts are integrated:
+**[docs/openshift-footprint.md](docs/openshift-footprint.md)**.
+
 ## What this is
 
 Dify Enterprise is [Partner Validated on OpenShift](https://catalog.redhat.com/en/software/container-stacks/detail/69fc3bfc14f7cd2916ffd595)

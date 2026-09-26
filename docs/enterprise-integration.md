@@ -103,7 +103,9 @@ See **[docs/monitoring.md](monitoring.md)**. No new operator was needed.
 **Traces are wired up as of 2026-09-26** — Dify's *数据推送* pointed at a
 platform-owned OpenTelemetry collector, stored in Tempo, visible under
 Observe → Traces. See **[docs/tracing.md](tracing.md)**, including what the
-traces do not show.
+traces do not show. The integration depth of every signal — metrics, traces,
+logs (not integrated), alerts (none defined) — is summarised in
+**[openshift-footprint.md](openshift-footprint.md)**.
 
 ## 4. Two identity planes, not one
 

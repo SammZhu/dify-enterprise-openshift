@@ -99,13 +99,20 @@ console reads Grafana dashboard JSON from ConfigMaps in
 `openshift-config-managed` labelled `console.openshift.io/dashboard=true` and
 renders them under **Observe → Dashboards** — no Grafana, no new operator.
 
-`components/dify-prereqs/dashboards/dify-enterprise.json` ships eight panels:
-tokens by model, tokens by workspace, input vs output, requests by application,
-message latency p50/p95/p99, workflow latency, tokens by operation type, and
-applications created/deleted.
+`components/dify-prereqs/dashboards/dify-enterprise.json` ships ten panels. The
+first four are cumulative since the API last restarted — tokens by model,
+requests by application, workflow runs with mean latency, applications
+created/deleted — and the rest are per-5-minute trends: tokens by model, by
+workspace, by operation type, input vs output, requests by application, and
+message latency p50/p95/p99. Why the cumulative ones lead is explained below.
 
-Every one of its 13 targets was run against live data before shipping, and all
-13 returned series. That check matters more than it looks: a dashboard of empty
+Every one of its 15 queries was run as a **range** query over the dashboard's
+window before shipping; the rare-event ones were proven against a historical
+timestamp where their series existed.
+
+**Straight after a restart there is nothing to show** — not a zero line, no
+series at all — until Dify handles its first request. The counters live in the
+API process and start again with it. That check matters more than it looks: a dashboard of empty
 panels does not read as "no traffic yet", it reads as "this integration does
 not work".
 
