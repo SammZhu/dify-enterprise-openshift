@@ -9,14 +9,18 @@ verified. You install the Dify Enterprise chart; everything it needs is here.
 |---|---|
 | Console | `https://console-openshift-console.apps.cluster-<guid>.dyn.redhatworkshops.io` |
 | API | `https://api.cluster-<guid>.dyn.redhatworkshops.io:6443` |
-| Accounts | Provisioned already — no self-registration. Ask for a username and password |
+| Accounts | Provisioned already. Ask for a username and password |
+| Ends | Dify license expires **2026-09-29**; the environment is destroyed **2026-09-30** |
 
 Log in through the **rhbk** identity provider (the button on the login page),
 not `kubeadmin`. Your account has admin rights on the `dify` namespace and
 nothing outside it.
 
+For the CLI, use the console's **your name → Copy login command → Display
+Token**, and run the `oc login --token=... --server=...` line it shows. That
+works whatever the identity provider supports; `oc login -u -p` may not.
+
 ```bash
-oc login -u <username> -p <password> https://api.cluster-<guid>.dyn.redhatworkshops.io:6443
 oc project dify
 ```
 
@@ -39,7 +43,7 @@ them up** — see the next section.
 
 ## Changed on 2026-09-26 — read before the next `helm upgrade`
 
-Three things changed under the running installation. Both are already applied to
+Three things changed under the running installation. All three are already applied to
 the chart's generated Secrets and ConfigMaps, so everything works now — but
 **Helm's stored values are stale**.
 
@@ -68,6 +72,75 @@ database, Redis, vector store and file storage at once.
 
 One thing to look at on your side: `dify-dify-enterprise-plugin-daemon-debug-svc`
 is a NodePort (32489), exposing a debug port on every node.
+
+## Settings that live in Dify, not in Git
+
+These are stored in Dify's database. GitOps cannot carry them, so they are yours
+to keep right — and to re-enter if the environment is ever rebuilt.
+
+| Setting | Where | Value / rule |
+|---|---|---|
+| Member SSO | Admin console → 身份认证 → 成员认证 → OIDC | Issuer `https://sso.apps.<cluster-domain>/realms/sso`, client `dify-enterprise`. **PKCE must stay on** — the client enforces S256 and login fails without it. Members are matched by **email** and must already exist *and* belong to a workspace |
+| Admin-console SSO | Admin console → 设置 → 登录设置 | Client `dify-dashboard`, PKCE on. Before enabling *自动创建系统用户*, note that realm `sso` allows self-registration — together they would let anyone become a Dify administrator |
+| Telemetry push | Admin console → 数据推送 | Unified mode, `http://dify-otel-collector.dify-observability.svc.cluster.local:4318`, `http/protobuf`. Traces land in the OpenShift console under Observe → Traces |
+| Model providers, embedding model, knowledge bases, apps | Developer console | See *Configuring the model provider* below |
+
+Client secrets are in `secret/dify-sso-client` and `secret/dify-sso-dashboard-client`.
+Copy them straight to the clipboard — **not** by selecting terminal output, which
+picks up zsh's trailing `%` and makes a 33-character secret that fails silently:
+
+```bash
+oc get secret dify-sso-client -n dify -o jsonpath='{.data.clientSecret}' | base64 -d | pbcopy
+pbpaste | wc -c     # must print 32
+```
+
+## For you to follow up on the Dify side
+
+Found while running your chart on OpenShift. None of it blocks the demo; all of
+it matters for a customer deployment.
+
+**Security**
+
+1. **Credentials in plaintext ConfigMaps.** The chart assembles the Redis
+   password into `REDIS_DSN` and three `MQ_REDIS_DSN` values, and into the
+   gateway's `Caddyfile`; `shared-vectordb-config` carries `QDRANT_API_KEY`.
+   ConfigMaps are unencrypted in etcd and far more widely readable than Secrets.
+2. **`RoleBinding/dify-dify-enterprise-sandbox-privileged`.** Your SCC templates
+   bind `privileged` to the sandbox. It is unused here — the sandbox runs under
+   `dify-sandbox` — but it is a silent fallback if the sandbox ever asks for
+   more. Please disable the SCC templates on OpenShift.
+3. **`plugin-daemon-debug-svc` is a NodePort (32489)** — a debug port on every
+   node.
+4. **An outbound call to `https://tmpl.dify.ai/apps`** when the Explore page
+   opens. Customers with restricted egress need to know, and ideally to switch
+   it off.
+
+**Observability**
+
+5. **Trace sampling defaults to 0.2** (`global.otel.samplingRate`), so a
+   demonstrated conversation is usually missing from the trace view. Set to
+   1.0 here.
+6. **One conversation arrives as several unconnected traces.** The API logs
+   `Failed to detach context` once per streamed answer; retrieval and the model
+   call end up in separate traces.
+7. **The plugin daemon exports no traces**, so the hop to the model provider is
+   invisible, and **the enterprise service sets no `service.name`**
+   (`unknown_service:enterprise`).
+8. **Citations are never recorded.** The app has `retriever_resource`
+   enabled, and Qdrant's access log shows searches returning results, yet
+   `dataset_retriever_resources` has **never held a single row** in this
+   installation. Either citations are not being stored, or they are stored
+   somewhere else — worth confirming.
+
+**Documentation and images**
+
+9. `externalQdrant` must be nested under `vectorDB` (the docs show it at the top
+   level, where it is ignored).
+10. `dify_plugin_daemon` is not created by the plugin daemon when the database
+    user lacks `CREATEDB`; the docs say it is created automatically.
+11. **MinIO's community images are no longer public** (`quay.io/minio/minio`
+    unauthorized, `docker.io/minio/minio` denied, checked 2026-09-26). Any
+    install guide that points at them will fail on a fresh node.
 
 ## Installing
 
@@ -100,25 +173,38 @@ is safe to create.
 
 ## Things that differ from the documented install
 
-Four adjustments are already applied in the generated values. They are recorded
-here because they will not match Dify's own install guide.
+These are applied in the generated values and will not match Dify's own install
+guide.
 
-**Ingress is the OpenShift router, not ingress-nginx.** `ingress.className` is
-`openshift-default`, and the annotations are translated — including a 600s
-timeout, without which streaming (SSE) responses are cut off, and forwarded
-headers, without which audit logs record the router's IP instead of the
-client's.
+**Routes, not Ingress.** The chart's own OpenShift mode
+(`global.openshift.routes.enabled`) creates six Routes directly, edge-terminated
+with HTTP redirected to HTTPS, `timeout: 600s` (without it streaming responses
+are cut off) and forwarded headers (without them the audit log records the
+router's IP). `ingress.enabled` is **false** — both on would expose every
+hostname twice.
 
-**Pods need to run as root.** The `anyuid` SCC is bound to the `dify`
-ServiceAccount, per Dify's own Resources Checklist. If the plugin build path
-turns out to need more, tell us and we will widen it — it is managed in Git.
+**Pod security without `privileged`.** `anyuid` is bound to the whole group
+`system:serviceaccounts:dify`, because the chart creates ServiceAccounts named
+after the release. The sandbox runs under a dedicated SCC, `dify-sandbox`
+(`SYS_CHROOT` and privilege escalation, nothing else); the plugin connector under
+`dify-nonroot`, which outranks `anyuid`. Nothing runs `privileged`. Details:
+[scc-requirements.md](scc-requirements.md).
 
-**The three databases already exist.** `dify`, `enterprise` and `audit` are
-created. `dify_plugin_daemon` the plugin daemon creates itself.
+**Four databases, created in advance.** `dify`, `enterprise`, `audit` and
+`dify_plugin_daemon`. Dify's guide says the plugin daemon creates its own; it
+does not, because the application user has no `CREATEDB`.
+
+**`externalQdrant` sits under `vectorDB`.** Dify's documentation shows it at the
+top level, where the chart silently ignores it and falls back to a placeholder
+URL.
 
 **Plugin registry is the OpenShift internal registry.**
-`imageRepoType: docker`, `insecureImageRepo: true`, and `image-repo-secret`
-already exists.
+`imageRepoType: docker`, `insecureImageRepo: true`, `image-repo-secret`
+exists, and the namespace's ServiceAccounts hold `system:image-builder` — a
+token alone is not permission to push.
+
+**Object storage is ODF's gateway**, path-style, at
+`http://s3.openshift-storage.svc:80`.
 
 ## The six hostnames
 
@@ -162,13 +248,17 @@ LiteMaaS embedding key later would not require reindexing.
 survives: the volumes persist and credentials are never regenerated. If the
 cluster is unreachable, it is probably stopped rather than broken — ask.
 
-**ArgoCD will not undo your changes.** Self-healing is deliberately off while
-you work, so anything you adjust by hand stays adjusted.
+**What ArgoCD does and does not undo.** The Dify chart's own objects are yours —
+Helm manages them and ArgoCD never touches them. The dependencies (databases,
+Redis, Qdrant, object storage, SCCs, RBAC, monitoring) are ArgoCD's. Self-healing
+is off while you work, but **every new commit to the repository re-applies them
+from Git**: a hand edit to a dependency survives until the next push, then is
+put back. If you need a dependency changed, tell us and it goes into Git.
 
 ## When something is wrong
 
-Run `./scripts/preflight-check.sh dify` first — it checks 32 things and prints
-the next command for each failure.
+Run `./scripts/preflight-check.sh dify` first — it checks the whole dependency
+tier by behaviour and prints the next command for each failure.
 
 Known quirks already hit on this cluster, in
 [deployment-findings.md](deployment-findings.md): a StatefulSet will not replace
