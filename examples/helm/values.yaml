@@ -75,6 +75,18 @@ components:
       enabled: true
       apiGroup: enterprise.dify.ai
 
+  # --- User workload monitoring ---------------------------------------------
+  # openshift-monitoring/cluster-monitoring-config with enableUserWorkload,
+  # which Dify's ServiceMonitor, dashboard and alerts depend on. It belongs to
+  # the cluster and ArgoCD replaces its config.yaml wholesale: list here every
+  # setting the cluster already has. A guard Job stops the sync if the live
+  # ConfigMap has settings missing from this map, and the ConfigMap is never
+  # deleted by ArgoCD. Set enabled: false where the cluster owner manages it.
+  clusterMonitoring:
+    enabled: true
+    config:
+      enableUserWorkload: true
+
   # --- Distributed tracing ------------------------------------------------
   # Tempo + a platform-owned OpenTelemetry collector + the console's Traces
   # page. On by default: it is part of what this deployment demonstrates.

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: cluster-monitoring
+description: Turns on OpenShift user workload monitoring, which Dify's ServiceMonitor, dashboard and alerts depend on
+type: application
+version: 0.1.0

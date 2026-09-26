@@ -19,13 +19,26 @@ listening.
 
 ## Two steps
 
-User workload monitoring is off by default. This cluster had no
-`cluster-monitoring-config` at all, so creating it clobbers nothing:
+User workload monitoring is off by default. The `cluster-monitoring` component
+turns it on (`components.clusterMonitoring`, on by default), by owning
+`openshift-monitoring/cluster-monitoring-config`:
 
-```bash
-oc -n openshift-monitoring create configmap cluster-monitoring-config \
-  --from-literal=config.yaml='enableUserWorkload: true'
+```yaml
+enableUserWorkload: true
 ```
+
+That ConfigMap belongs to the whole cluster, and ArgoCD replaces its
+`config.yaml` rather than merging into it. So the component carries two
+guards. A Job runs first and **stops the sync if the live ConfigMap has
+top-level settings the values do not list** — retention, storage, alerting —
+naming them, rather than letting ArgoCD silently delete them; copy them into
+`components.clusterMonitoring.config` and sync again. And the ConfigMap is
+marked `Delete=false,Prune=false`: removing the component leaves it in place,
+because deleting it would switch off user workload monitoring for every
+application on the cluster. Where the cluster owner manages this ConfigMap, set
+the component to `false`.
+
+This cluster had no `cluster-monitoring-config` before this deployment.
 
 Five pods appear in `openshift-user-workload-monitoring` within about 30
 seconds — two Prometheus replicas and two Thanos Rulers.
@@ -35,8 +48,9 @@ The ServiceMonitor then comes from this repo
 inert without the switch above: nothing scrapes it and nothing errors, which is
 why it is safe to ship enabled.
 
-That split is deliberate. Enabling user workload monitoring changes the
-cluster; it belongs to whoever owns the cluster, not to an application's chart.
+The switch sits in its own component, not in `dify-prereqs`, so that it can be
+turned off on its own: enabling user workload monitoring changes the cluster,
+and on a shared cluster that is the cluster owner's decision.
 
 ## The twelve metrics
 

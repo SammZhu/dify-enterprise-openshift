@@ -67,6 +67,45 @@ spec:
       - CreateNamespace=true
 {{- end }}
 
+{{- if .Values.components.clusterMonitoring.enabled }}
+---
+# User workload monitoring. Sync-wave 0 with prereqs: the ServiceMonitor there
+# is inert until this is on, and errors neither way.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-cluster-monitoring
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/cluster-monitoring
+    helm:
+      valuesObject:
+        clusterMonitoring:
+          enabled: true
+          jobNamespace: {{ $common.ns }}
+          config:
+{{ toYaml .Values.components.clusterMonitoring.config | indent 12 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $common.ns }}
+  syncPolicy:
+    automated:
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
+    syncOptions:
+      - CreateNamespace=true
+{{- end }}
+
 {{- if .Values.components.pluginCrds.enabled }}
 ---
 # The plugin CRD, installed by ArgoCD rather than by hand.

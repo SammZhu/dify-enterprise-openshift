@@ -1,0 +1,11 @@
+clusterMonitoring:
+  enabled: true
+  # Where the guard Job runs (not openshift-monitoring).
+  jobNamespace: dify
+  cliImage: quay.io/openshift/origin-cli:latest
+  # The WHOLE of cluster-monitoring-config's config.yaml. ArgoCD replaces it,
+  # it does not merge. A cluster that already sets anything here (retention,
+  # storage, alerting...) must list those settings too - the guard Job stops
+  # the sync if it finds top-level settings missing from this map.
+  config:
+    enableUserWorkload: true

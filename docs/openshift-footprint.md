@@ -22,7 +22,7 @@ Everything else is namespace-scoped. These are the only cluster-level changes:
 | SCC `dify-sandbox` + ClusterRole `dify-sandbox-scc-use` | Sandbox needs `SYS_CHROOT` — **instead of `privileged`** | `prereqs` (default) |
 | SCC `dify-nonroot` + ClusterRole `dify-nonroot-use` | Outranks the namespace-wide `anyuid` for the plugin connector | `prereqs` (default) |
 | ConfigMap `openshift-config-managed/dashboard-dify-enterprise` | Console dashboard | `prereqs` (default; `monitoring.dashboard.enabled`) |
-| ConfigMap `openshift-monitoring/cluster-monitoring-config` | Turns on user workload monitoring | **By hand, one command** — it belongs to the cluster owner, not to an application chart |
+| ConfigMap `openshift-monitoring/cluster-monitoring-config` | Turns on user workload monitoring | `cluster-monitoring` (on by default). ArgoCD replaces its `config.yaml`, so a guard Job stops the sync if the cluster already sets anything not listed in values; never deleted by ArgoCD (`Delete=false`) |
 | Subscriptions: Tempo, Red Hat build of OpenTelemetry, Cluster Observability | Tracing | `tracing` (on by default) |
 | UIPlugin `distributed-tracing` | Adds Observe → Traces | `tracing` |
 | ClusterRole/Binding `dify-traces-writer` | Lets the collector write tenant `dify` traces, nothing else | `tracing` |
@@ -69,12 +69,8 @@ Where the running environment and the repository differ, and why:
 
 | Object | State | Why | Rebuild / action |
 |---|---|---|---|
-| `cluster-monitoring-config` | Created by hand | Cluster-owned; deliberately not in an app chart | `oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'` |
 | RHBK clients and `dify-sso-*` Secrets | Script | Secrets must not be in Git; the client lives in another namespace | `scripts/create-sso-client.sh workspace` / `dashboard` |
 | `image-repo-secret` | Script | Holds a registry token | `scripts/create-image-repo-secret.sh` |
-| ImageStream `dify/minio` | By hand | A rescue copy of the MinIO image, taken from a node's cache when the registry stopped serving it | Unused since the move to MCG. Safe to delete |
-| StatefulSet `dify-minio` (0 replicas), Service `dify-minio`, PVC `data-dify-minio-0` | Orphaned | Its ArgoCD Application was removed; the object still carries the old tracking annotation | Kept as a rollback copy until the environment is destroyed |
-| Secret `dify-minio` | Created with `kubectl` | MinIO's root credentials | Nothing mounts it since the move to MCG. Delete together with the StatefulSet |
 | Helm release records `sh.helm.release.v1.dify.v*` | Left from the manual install | Dify is installed by ArgoCD since 2026-09-26; the records were kept by decision | **Their stored values are stale** (pre-rotation credentials, MinIO endpoint). Do not `helm upgrade` or `--reuse-values` — see [gitops-dify-chart.md](gitops-dify-chart.md) |
 | Redis list `trigger_refresh_publisher` (~1 message/min, 3.0 MB on 09-26) | Growing | Upstream: a beat task on a queue no worker consumes | Deliberately left; see handover.md item 13 |
 | RoleBinding `dify-dify-enterprise-sandbox-privileged` | From Dify's chart | Its SCC templates bind `privileged` to the sandbox | Unused — the sandbox runs under `dify-sandbox` — but a silent fallback if the sandbox ever asks for more. Ask Dify to disable their SCC templates |
@@ -94,6 +90,16 @@ recreating them. Two side effects, both expected and harmless:
   template, so ArgoCD adding its tracking annotation rolled the collector once.
   Traces and logs kept arriving: 100 traces and 415 log lines within two
   minutes of the restart.
+
+**The MinIO leftovers were deleted on 2026-09-26** — StatefulSet, Service,
+Secret, the rescue ImageStream and the 50 Gi volume — once nothing referenced
+them: no pod mounted the claim, no workload but MinIO's own read its Secret, and
+no Dify configuration named its endpoint. `components/minio` stays in the repo,
+disabled, for clusters without ODF.
+
+**`cluster-monitoring-config` was adopted the same day** by the
+`cluster-monitoring` component; its rendered content is byte-identical to what
+had been created by hand.
 
 ## Configuration that lives in Dify's database, not in Kubernetes
 

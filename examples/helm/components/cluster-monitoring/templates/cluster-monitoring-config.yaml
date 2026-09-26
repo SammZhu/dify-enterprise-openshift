@@ -1,0 +1,124 @@
+{{- if .Values.clusterMonitoring.enabled }}
+{{- $c := .Values.clusterMonitoring }}
+{{- $jobNs := $c.jobNamespace }}
+# =============================================================================
+# User workload monitoring - the switch Dify's monitoring depends on
+# =============================================================================
+# Without it, the ServiceMonitor, dashboard and alert rules in dify-prereqs are
+# inert: no user-workload Prometheus runs, nothing scrapes, nothing errors.
+#
+# This ConfigMap belongs to the cluster, not to Dify, and ArgoCD replaces its
+# config.yaml wholesale. Two guards:
+#   - the Job below stops the sync if the live config.yaml has top-level
+#     settings that values.yaml does not list, instead of silently dropping
+#     them (retention, storage, alerting...);
+#   - Delete=false / Prune=false: removing this component or its Application
+#     leaves the ConfigMap in place. Deleting it would switch off user workload
+#     monitoring for every application on the cluster.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cluster-monitoring-guard
+  namespace: {{ $jobNs }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-monitoring-guard
+  namespace: openshift-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [cluster-monitoring-config]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-monitoring-guard
+  namespace: openshift-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cluster-monitoring-guard
+subjects:
+  - kind: ServiceAccount
+    name: cluster-monitoring-guard
+    namespace: {{ $jobNs }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cluster-monitoring-guard
+  namespace: {{ $jobNs }}
+  annotations:
+    # Before the ConfigMap: a failed Job stops the sync at this wave.
+    argocd.argoproj.io/sync-wave: "-1"
+    # A completed Job cannot be updated in place; see dify-prereqs'
+    # generate-secrets-job.yaml. Read-only, so re-running is harmless.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: cluster-monitoring-guard
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: guard
+          image: {{ $c.cliImage }}
+          env:
+            - {name: HOME, value: /tmp}
+            - name: DESIRED_KEYS
+              value: {{ keys $c.config | sortAlpha | toJson | quote }}
+          command:
+            - python3
+            - -c
+            - |
+              import json, os, re, subprocess, sys
+              r = subprocess.run(["oc", "-n", "openshift-monitoring", "get", "configmap",
+                                  "cluster-monitoring-config", "-o", "json"],
+                                 capture_output=True, text=True)
+              if r.returncode:
+                  if "NotFound" in r.stderr:
+                      print("cluster-monitoring-config does not exist yet - nothing to preserve")
+                      sys.exit(0)
+                  sys.exit("error: reading cluster-monitoring-config: " + r.stderr.strip())
+              text = (json.loads(r.stdout).get("data") or {}).get("config.yaml", "")
+              live = sorted(set(re.findall(r"^([A-Za-z0-9_]+)\s*:", text, re.M)))
+              desired = json.loads(os.environ["DESIRED_KEYS"])
+              missing = [k for k in live if k not in desired]
+              if missing:
+                  sys.exit("error: cluster-monitoring-config sets " + ", ".join(missing)
+                           + ", which components.clusterMonitoring.config does not list. "
+                           "Syncing would delete those settings. Copy them into the values, "
+                           "or set components.clusterMonitoring.enabled: false.")
+              print("live settings " + str(live) + " are all declared - safe to apply")
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
+data:
+  config.yaml: |
+{{ toYaml $c.config | indent 4 }}
+{{- end }}

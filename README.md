@@ -46,6 +46,7 @@ It does **not** ship the data tier. This repo provides everything else:
 | Component | What it is | Why |
 |---|---|---|
 | `dify-prereqs` | SCC binding, ServiceAccount, Role/RoleBinding | Dify docs require pods to run as root on OpenShift; License activation requires a dedicated SA + RBAC |
+| `cluster-monitoring` | Turns on user workload monitoring, guarded | Dify's metrics, dashboard and alerts need it; the guard stops a sync that would overwrite a cluster's existing monitoring settings |
 | `postgresql` | PostgreSQL 16 + **pre-created `dify` / `enterprise` / `audit` databases** | Dify requires 14+ and will not start unless those three databases already exist |
 | `redis` | Redis 7 | Dify requires 6+ |
 | `qdrant` | Qdrant | The vector DB Dify officially recommends; its support list is very short |

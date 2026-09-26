@@ -11,11 +11,10 @@
 #   dify_message_duration_seconds       dify_workflow_duration_seconds
 #   dify_requests_total                 dify_app_created_total
 #
-# No new operator is required. The one prerequisite is cluster-side and is NOT
-# managed here, because it belongs to the cluster rather than to this app:
-#
-#   oc -n openshift-monitoring create configmap cluster-monitoring-config \
-#     --from-literal=config.yaml='enableUserWorkload: true'
+# No new operator is required. The one prerequisite is cluster-side and lives
+# in its own component, components/cluster-monitoring (enableUserWorkload in
+# openshift-monitoring/cluster-monitoring-config), so it can be turned off
+# where the cluster owner manages that ConfigMap.
 #
 # Without it this object is simply inert - user-workload Prometheus is not
 # running, so nothing scrapes it and nothing errors.
