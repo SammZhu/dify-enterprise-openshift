@@ -14,6 +14,20 @@ Red Hat build of OpenTelemetry 0.158, Cluster Observability Operator 1.5.2.
 The question a platform audience asks first. Rehearsed on this cluster; every
 number below is from a real conversation.
 
+**Best view — one conversation, one tree.** With the app's LLM tracing sent to
+the platform collector (see [LLM-level traces](#llm-level-traces-through-difys-phoenix-integration)),
+query `{ span.openinference.span.kind = "LLM" }` and open the trace:
+
+```
+Dify                                 CHAIN
+├─ dataset_retrieval       326 ms    RETRIEVER   the query and the documents it found
+└─ message                7748 ms    CHAIN
+   └─ llm                 7748 ms    LLM         deepseek-flash, 5499 + 1550 = 7049 tokens
+```
+
+Model, time and tokens for one question in one place. The steps below use the
+infrastructure traces instead, which need no app setting but arrive in pieces.
+
 **Before the audience arrives**
 
 1. Ask the assistant one question after the cluster has started. The first
@@ -63,6 +77,54 @@ sampled, so this covers every message.
 retrieval, model call) rather than one waterfall — Dify's generation thread does
 not carry the trace context. The pieces line up by time. The hop from the
 plugin daemon into the model provider itself is not traced.
+
+## LLM-level traces through Dify's Phoenix integration
+
+Dify has a second, separate kind of tracing: per app, *监测 → 追踪应用性能*,
+aimed at third-party LLMOps platforms (Langfuse, LangSmith, Phoenix, MLflow…).
+These traces carry the prompt, the retrieved documents, the answer, the model
+and the token counts — what an AI team debugs with, not what a platform team
+debugs with.
+
+Its Phoenix integration is **plain OTLP/HTTP**: it POSTs OpenInference spans to
+`<endpoint>/v1/traces` (`core/ops/arize_phoenix_trace/`). So it can be pointed
+at the platform's own collector, and those traces land in Tempo beside the
+infrastructure ones — no Phoenix, no third-party service.
+
+| Field | Value |
+|---|---|
+| Provider | **Phoenix** (not Arize — that branch speaks gRPC to a different path) |
+| Endpoint | `http://dify-otel-collector.dify-observability.svc.cluster.local:4318` |
+| API Key | anything; the platform collector does not check it |
+| Project | `dify-demo` |
+
+The setting is per app and lives in Dify's database, not in Git.
+
+**What arrived** for one knowledge-base question: a single trace, 12 spans, one
+root — the Celery `ops_trace` task, with the OpenInference tree beneath it
+(`Dify` → `dataset_retrieval`, `message` → `llm`). **This is the one place a
+conversation is one tree**: the infrastructure traces split it because the
+generation thread drops context; these are built by the worker after the
+message completes, from Dify's own records.
+
+**Verified against Dify's database:** tokens exact — prompt 5499, completion
+1550, total 7049 in both. Duration close, not equal: the `llm` span 7.75 s,
+Dify's recorded provider latency 8.01 s; the difference was not investigated.
+
+**Things to know:**
+
+- **The spans carry content.** Prompts, retrieved passages and answers are span
+  attributes, readable by anyone who can read tenant `dify` in Tempo. Fine for
+  a demo; a data-governance decision in a customer's environment.
+- **Timestamps are reconstructed.** The tree is written after the fact, so a
+  0 ms `Dify` span has a 7.7 s child and the children sit earlier than their
+  Celery parent in the waterfall. Read durations, not layout.
+- **"Success" in the worker log means handed to the exporter**, not delivered.
+  Check Tempo. (The save-time connectivity check does send a real span — one
+  arrived when the setting was saved — but nothing blocks saving if it fails.)
+- Queries: `{ span.openinference.span.kind = "LLM" }` for model calls,
+  `{ resource.openinference.project.name = "dify-demo" }` for everything from
+  the app.
 
 ## What it adds to the metrics that were already there
 
@@ -224,7 +286,7 @@ Worth stating plainly in front of a customer:
    log line for the model call has an **empty `trace_id`**. So the HTTP call to
    the daemon starts a new trace instead of joining the conversation, and the
    bookkeeping after it is lost entirely. The pieces have to be lined up by
-   time.
+   time — or use the LLM-level traces below, which are one tree per message.
 
 2. **The plugin daemon was invisible — because every export failed.** It did
    export, 128 times in ten minutes, and every attempt failed:

@@ -93,6 +93,7 @@ to keep right — and to re-enter if the environment is ever rebuilt.
 | Member SSO | Admin console → 身份认证 → 成员认证 → OIDC | Issuer `https://sso.apps.<cluster-domain>/realms/sso`, client `dify-enterprise`. **PKCE must stay on** — the client enforces S256 and login fails without it. Members are matched by **email** and must already exist *and* belong to a workspace |
 | Admin-console SSO | Admin console → 设置 → 登录设置 | Client `dify-dashboard`, PKCE on. Before enabling *自动创建系统用户*, note that realm `sso` allows self-registration — together they would let anyone become a Dify administrator |
 | Telemetry push | Admin console → 数据推送 | Unified mode, `http://dify-otel-collector.dify-observability.svc.cluster.local:4318`, `http/protobuf`. Traces land in the OpenShift console under Observe → Traces |
+| App LLM tracing | Developer console → app → 监测 → 追踪应用性能 → **Phoenix** | Endpoint `http://dify-otel-collector.dify-observability.svc.cluster.local:4318`, any API key, project `dify-demo`. Per app. Sends prompts and answers into Tempo — see [tracing.md](tracing.md#llm-level-traces-through-difys-phoenix-integration) |
 | Model providers, embedding model, knowledge bases, apps | Developer console | See *Configuring the model provider* below |
 
 Client secrets are in `secret/dify-sso-client` and `secret/dify-sso-dashboard-client`.
