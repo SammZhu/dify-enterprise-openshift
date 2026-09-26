@@ -43,7 +43,7 @@ them up** — see the next section.
 
 ## Changed on 2026-09-26 — read before the next `helm upgrade`
 
-Three things changed under the running installation. All three are already applied to
+Four things changed under the running installation. All four are already applied to
 the chart's generated Secrets and ConfigMaps, so everything works now — but
 **Helm's stored values are stale**.
 
@@ -61,6 +61,13 @@ the chart's generated Secrets and ConfigMaps, so everything works now — but
    once) — see [tracing.md](tracing.md). Applied to the
    five ConfigMaps that carry `OTEL_SAMPLING_RATE`; the rendered values carry it
    too.
+
+4. **The plugin daemon's telemetry now reaches the collector.** Its three
+   `OTLP_*_ENDPOINT` values in `plugin-daemon-config` were moved from `:4317`
+   to `:4318`; before that every trace and metric export failed (item 7 below).
+   This is not a chart value, so **after every `helm upgrade` run
+   `./scripts/fix-plugin-daemon-otlp.sh`** — it is safe to re-run, does nothing
+   if already applied, and checks for export errors afterwards.
 
 So before any `helm upgrade`, **re-render the values**:
 
@@ -126,14 +133,30 @@ it matters for a customer deployment.
 6. **One conversation arrives as several unconnected traces.** The API logs
    `Failed to detach context` once per streamed answer; retrieval and the model
    call end up in separate traces.
-7. **The plugin daemon exports no traces**, so the hop to the model provider is
-   invisible, and **the enterprise service sets no `service.name`**
-   (`unknown_service:enterprise`).
+7. **The plugin daemon's telemetry goes to the wrong port.** The chart renders
+   `:4317` (gRPC) for every component; the plugin daemon ignores
+   `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`, speaks OTLP/HTTP, and every export fails
+   with `malformed HTTP response` — 128 failures in ten minutes. Patched here
+   (change 4 above), but it needs either a chart value for the endpoint or the
+   daemon honouring the protocol setting. Separately, **the enterprise service
+   sets no `service.name`** (`unknown_service:enterprise`).
 8. **Citations are never recorded.** The app has `retriever_resource`
    enabled, and Qdrant's access log shows searches returning results, yet
    `dataset_retriever_resources` has **never held a single row** in this
    installation. Either citations are not being stored, or they are stored
    somewhere else — worth confirming.
+
+**Data lifecycle**
+
+12. **Deleting a document or a knowledge base triggered no cleanup.** A
+    document deleted at 12:14:56 and its knowledge base at 12:15:10: no cleanup
+    task reached the worker, nothing was logged as an error, and both the
+    uploaded file in object storage and its 28 vectors in Qdrant remain. Is
+    cleanup deferred to a scheduled job (there is a `retention` queue), or not
+    dispatched at all?
+13. **`trigger_refresh_publisher` holds 2528 unconsumed messages** in Redis
+    (broker db 1); no worker lists that queue. Observed, not investigated —
+    unbounded growth if nothing drains it.
 
 **Documentation and images**
 

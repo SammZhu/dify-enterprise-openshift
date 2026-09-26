@@ -72,6 +72,22 @@ page. When the real traffic arrived, the only unknown left was Dify itself.
 
 ## What the traces show
 
+**One trace across three components.** Adding a Markdown file to a knowledge
+base, after the plugin daemon was fixed, produced a single trace of 233 spans
+from two services:
+
+```
++0 ms    api            POST /console/api/datasets/…/documents
++55 ms   api            apply_async  document_indexing_task
++59 ms   worker         run  document_indexing_task            (1435 ms)
++167 ms  plugin-daemon  GET  /plugin/:tenant_id/management/models
++253 ms  plugin-daemon  POST /plugin/:tenant_id/dispatch/text_embedding/num_tokens
+```
+
+Context crosses the Celery boundary and the HTTP call into the daemon. It was
+fetched by the trace ID in the worker's own log line, which avoids the search
+lag described below.
+
 **A cold start, measured.** The same question, asked after an API restart and
 again a few minutes later:
 
@@ -144,11 +160,18 @@ Worth stating plainly in front of a customer:
    "5 s = 0.3 s retrieval + 4.5 s model". The pieces have to be lined up by time.
    The API logs the mechanism itself as `Failed to detach context` at ERROR
    severity, once per streamed answer.
-2. **The model call is a black box past the plugin daemon.** The daemon does
-   not export traces, so the hop to the model provider is invisible. The span
-   measured ~1 s while the recorded model latency was 4–5 s; the likeliest
-   explanation is that the span ends when response headers arrive, before the
-   stream completes. Not verified.
+2. **The plugin daemon was invisible — because every export failed.** It did
+   export, 128 times in ten minutes, and every attempt failed:
+   `traces export: Post "http://…collector-svc:4317/v1/traces": … malformed HTTP
+   response`. The chart points every component at the collector's gRPC port;
+   the API honours `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`, the plugin daemon ignores
+   it and speaks HTTP. **Fixed here** by moving its three endpoints to `:4318`
+   (`scripts/fix-plugin-daemon-otlp.sh`) — the endpoint is not a chart value, so
+   `helm upgrade` undoes it and the script must be re-run. Afterwards: zero
+   failures, `dify-plugin-daemon` appears as a service, and **its spans join the
+   caller's trace** — see below. Still not visible: the embedding call itself
+   did not appear as a daemon span, and the hop from the daemon into the plugin
+   pod and on to the model is not traced. Neither was investigated.
 3. **Noise.** Background Redis `PUBLISH`, health checks and orphaned spans
    (`<root span not yet received>`, whose parent comes from a component that
    does not export) far outnumber conversations.
