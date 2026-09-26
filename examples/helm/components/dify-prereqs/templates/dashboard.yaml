@@ -23,7 +23,14 @@ metadata:
   name: {{ .Values.prereqs.monitoring.dashboard.name }}
   namespace: {{ .Values.prereqs.monitoring.dashboard.namespace }}
   labels:
+    # Global view: Observe -> Dashboards with no project selected.
     console.openshift.io/dashboard: "true"
+    # Project view: the same page entered with a project selected. It lists
+    # only ConfigMaps that ALSO carry this label - without it the dashboard is
+    # invisible there, even to cluster-admin, and nothing says why. Since 4.19
+    # merged the Developer and Administrator perspectives, the project view is
+    # where most people land.
+    console.openshift.io/odc-dashboard: "true"
     demo.redhat.com/application: "dify-enterprise"
 data:
   dify-enterprise.json: |

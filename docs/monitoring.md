@@ -109,15 +109,27 @@ Every one of its 13 targets was run against live data before shipping, and all
 panels does not read as "no traffic yet", it reads as "this integration does
 not work".
 
-### Two gates that make it look like the dashboard was never created
+### Two labels, because there are two views
 
-**It is in the Administrator perspective, not Developer.** Developer → Observe →
-Dashboards offers a fixed set of namespace-scoped Kubernetes panels and never
-reads `openshift-config-managed`. The custom dashboard only appears under
-Administrator → Observe → Dashboards. Nothing warns about this — the page looks
-complete, just without your dashboard in the list.
+The console has two dashboard views, and they read different labels:
 
-**A regular user cannot see it at all.** The monitoring plugin lists ConfigMaps
+| View | Reached by | Lists ConfigMaps labelled |
+|---|---|---|
+| Global | Observe → Dashboards, no project selected | `console.openshift.io/dashboard=true` |
+| Project | the same page with a project selected | **also** `console.openshift.io/odc-dashboard=true` |
+
+With only the first label the dashboard is invisible in the project view —
+**even to cluster-admin**, and nothing says why: the dropdown just shows the
+cluster's own four namespace dashboards and looks complete. Since 4.19 merged
+the Developer and Administrator perspectives, the project view is where most
+people land. This cost a round trip before it was found; the first diagnosis
+("switch to the Administrator perspective") was wrong. What settled it was
+counting: exactly four built-in ConfigMaps carry `odc-dashboard`, and they are
+exactly the four the user could see.
+
+The template sets both labels.
+
+**A regular user still cannot see it.** The monitoring plugin lists ConfigMaps
 in `openshift-config-managed` by label, so the viewer needs `list` on that
 namespace:
 
