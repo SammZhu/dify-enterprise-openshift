@@ -109,6 +109,32 @@ Every one of its 13 targets was run against live data before shipping, and all
 panels does not read as "no traffic yet", it reads as "this integration does
 not work".
 
+### The first event after a restart is invisible to `increase()`
+
+The dashboard first shipped with every panel as a per-5-minute `increase()`,
+and after the cluster's nightly stop it showed **no data even with traffic
+flowing**. Dify's counters restart from zero with the API pod, and the first
+sample Prometheus ever sees for the new series already carries the first
+event's total — 2906 tokens in the case that exposed it. Prometheus cannot know
+the counter was 0 a moment earlier, so `increase()` reports 0. The first
+request after every restart is uncountable by rate functions.
+
+In steady production traffic that is noise. In a demo environment that stops
+every night, it is the first thing anyone sees each morning, and rare events —
+creating an application, running a workflow — may never produce a second
+sample during a demo at all.
+
+So the dashboard leads with **cumulative-since-restart** panels (tokens by
+model, requests by application, workflow runs with mean latency, applications
+created/deleted), which show a single event immediately. The per-5-minute
+panels stay below, labelled as such, for trends.
+
+Validation has to use **range** queries over the dashboard's window. Instant
+queries passed every check while the rendered panels were empty — that is the
+check that missed this. The rare-event expressions were proven against a
+historical timestamp where the series existed (4 created, 3 deleted, one
+workflow at 0.29 s mean), since there were no such events after the restart.
+
 ### Two labels, because there are two views
 
 The console has two dashboard views, and they read different labels:

@@ -42,14 +42,172 @@
     },
     {
       "type": "graph",
-      "title": "Tokens by model",
-      "id": 1,
+      "title": "Tokens by model \u2014 cumulative since last restart",
+      "id": 201,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
         "y": 1
+      },
+      "span": 12,
+      "fill": 1,
+      "linewidth": 2,
+      "lines": true,
+      "bars": false,
+      "points": false,
+      "stack": false,
+      "percentage": false,
+      "nullPointMode": "null",
+      "steppedLine": false,
+      "legend": {
+        "alignAsTable": true,
+        "avg": false,
+        "current": true,
+        "hideEmpty": true,
+        "hideZero": false,
+        "max": true,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sort": "current",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 2,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": 0,
+          "show": true
+        },
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "targets": [
+        {
+          "expr": "sum by (model_name) (dify_tokens_total)",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "{{model_name}}",
+          "refId": "A"
+        }
+      ],
+      "seriesOverrides": [],
+      "thresholds": [],
+      "links": []
+    },
+    {
+      "type": "graph",
+      "title": "Requests by application \u2014 cumulative since last restart",
+      "id": 202,
+      "datasource": "$datasource",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "span": 12,
+      "fill": 1,
+      "linewidth": 2,
+      "lines": true,
+      "bars": false,
+      "points": false,
+      "stack": false,
+      "percentage": false,
+      "nullPointMode": "null",
+      "steppedLine": false,
+      "legend": {
+        "alignAsTable": true,
+        "avg": false,
+        "current": true,
+        "hideEmpty": true,
+        "hideZero": false,
+        "max": true,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sort": "current",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "tooltip": {
+        "shared": true,
+        "sort": 2,
+        "value_type": "individual"
+      },
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": 0,
+          "show": true
+        },
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "targets": [
+        {
+          "expr": "sum by (app_id) (dify_requests_total)",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "{{app_id}}",
+          "refId": "A"
+        }
+      ],
+      "seriesOverrides": [],
+      "thresholds": [],
+      "links": []
+    },
+    {
+      "type": "graph",
+      "title": "Tokens by model \u2014 per 5 min",
+      "id": 1,
+      "datasource": "$datasource",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
       },
       "span": 12,
       "fill": 1,
@@ -121,14 +279,14 @@
     },
     {
       "type": "graph",
-      "title": "Tokens by workspace",
+      "title": "Tokens by workspace \u2014 per 5 min",
       "id": 2,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 1
+        "y": 9
       },
       "span": 12,
       "fill": 1,
@@ -200,14 +358,14 @@
     },
     {
       "type": "graph",
-      "title": "Input vs output tokens",
+      "title": "Input vs output tokens \u2014 per 5 min",
       "id": 3,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 9
+        "y": 17
       },
       "span": 12,
       "fill": 1,
@@ -293,7 +451,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 9
+        "y": 17
       },
       "span": 12,
       "fill": 1,
@@ -372,7 +530,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 25
       },
       "span": 12,
       "fill": 1,
@@ -458,14 +616,14 @@
     },
     {
       "type": "graph",
-      "title": "Workflow latency (p50 / p95)",
+      "title": "Workflow runs and mean latency \u2014 since last restart",
       "id": 6,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 25
       },
       "span": 12,
       "fill": 1,
@@ -482,7 +640,7 @@
         "avg": false,
         "current": true,
         "hideEmpty": true,
-        "hideZero": true,
+        "hideZero": false,
         "max": true,
         "min": false,
         "rightSide": true,
@@ -506,7 +664,7 @@
       },
       "yaxes": [
         {
-          "format": "s",
+          "format": "short",
           "label": null,
           "logBase": 1,
           "max": null,
@@ -524,17 +682,17 @@
       ],
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(dify_workflow_duration_seconds_bucket[5m])))",
+          "expr": "sum (dify_workflow_duration_seconds_count)",
           "format": "time_series",
           "intervalFactor": 1,
-          "legendFormat": "p50",
+          "legendFormat": "runs",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(dify_workflow_duration_seconds_bucket[5m])))",
+          "expr": "sum (dify_workflow_duration_seconds_sum) / sum (dify_workflow_duration_seconds_count)",
           "format": "time_series",
           "intervalFactor": 1,
-          "legendFormat": "p95",
+          "legendFormat": "mean seconds",
           "refId": "B"
         }
       ],
@@ -544,14 +702,14 @@
     },
     {
       "type": "graph",
-      "title": "Tokens by operation type",
+      "title": "Tokens by operation type \u2014 per 5 min",
       "id": 7,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 33
       },
       "span": 12,
       "fill": 1,
@@ -623,14 +781,14 @@
     },
     {
       "type": "graph",
-      "title": "Applications created / deleted",
+      "title": "Applications created / deleted \u2014 cumulative since last restart",
       "id": 8,
       "datasource": "$datasource",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 25
+        "y": 33
       },
       "span": 12,
       "fill": 1,
@@ -647,7 +805,7 @@
         "avg": false,
         "current": true,
         "hideEmpty": true,
-        "hideZero": true,
+        "hideZero": false,
         "max": true,
         "min": false,
         "rightSide": true,
@@ -689,14 +847,14 @@
       ],
       "targets": [
         {
-          "expr": "sum (increase(dify_app_created_total[1h]))",
+          "expr": "sum (dify_app_created_total)",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "created",
           "refId": "A"
         },
         {
-          "expr": "sum (increase(dify_app_deleted_total[1h]))",
+          "expr": "sum (dify_app_deleted_total)",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "deleted",
