@@ -53,15 +53,16 @@ It does **not** ship the data tier. This repo provides everything else:
 | `minio` | MinIO + bucket bootstrap | **Disabled.** Kept for clusters without ODF; needs an image you mirror yourself |
 | `embedder` | `nomic-embed-text` on CPU, OpenAI-compatible | A LiteMaaS key serves only the one model ordered, so RAG had no embedder |
 | `plugin-crds` | The `DifyPlugin` CRD | CRD-driven plugin system; the CRD is not in the certified image set |
-| `dify` | Renders a cluster-ready `dify-values.yaml` | See below |
+| `dify` | Installs the certified `dify-enterprise` chart through ArgoCD, credentials resolved on the cluster | See below and [docs/gitops-dify-chart.md](docs/gitops-dify-chart.md) |
 
 ## Two boundaries, stated up front
 
-**1. The `dify-enterprise` chart is a commercial artifact.** It is delivered with
-your Dify Enterprise contract, along with the License and deployment manual. This
-repo cannot install it for you. What it does instead: the `dify` component renders
-a `dify-values` ConfigMap already filled in with this cluster's domain, in-cluster
-service endpoints, and credentials. Extract it and hand it to Helm.
+**1. The chart is public; the License is not.** Red Hat's certified
+`dify-enterprise` chart is published at `https://charts.openshift.io`, and
+ArgoCD installs it from there with values rendered for this cluster. What still
+comes with a Dify Enterprise contract is the License, activated in Dify's
+dashboard after install. Note that Dify's own public `dify/dify` chart is a
+different chart — it has no Routes and no OpenShift RBAC.
 
 **2. Neither vendor supports this combination out of the box.** Red Hat lists Dify
 Enterprise as *Partner Validated* — self-tested by the partner, not jointly
@@ -91,18 +92,29 @@ run in-cluster, so budget for all of it.
 
 ## Install
 
-GitOps syncs the dependencies in waves (prereqs → data tier → dify). Once they
-are healthy:
+GitOps syncs everything in waves (prereqs → data tier → Dify). The one manual
+step is the plugin registry secret, which holds a token:
 
 ```bash
-# 1. Create the plugin registry secret (name is fixed by Dify)
+# Create the plugin registry secret (name is fixed by Dify)
 ./scripts/create-image-repo-secret.sh internal dify
+```
 
-# 2. Resolve the cluster-ready values (writes live credentials - gitignored)
-./scripts/render-dify-values.sh dify > dify-values.yaml
+Dify itself is installed by ArgoCD (`field-content-dify-chart`). The chart
+cannot reference an existing Secret, so ArgoCD renders it with credential
+placeholders and a Job resolves them on the cluster — no credential passes
+through ArgoCD or Git. How, and how it was verified:
+**[docs/gitops-dify-chart.md](docs/gitops-dify-chart.md)**. To upgrade Dify,
+change `components.dify.chart.version` and run
+`scripts/gen-dify-secret-fields.py`.
 
-# 3. Install the commercial chart
-helm upgrade --install dify <your-dify-chart-repo>/dify -n dify -f dify-values.yaml --force
+Without this GitOps setup, the same values install by hand:
+
+```bash
+./scripts/render-dify-values.sh dify > dify-values.yaml   # live credentials - gitignored
+helm upgrade --install dify dify-enterprise --repo https://charts.openshift.io \
+  --version 3.9.8 -n dify -f dify-values.yaml --force
+./scripts/fix-plugin-daemon-otlp.sh dify
 ```
 
 `--force` matters on OpenShift: the service-account-controller injects
@@ -184,9 +196,10 @@ what is already running, how to install, and where this deployment differs from
 Dify's own install guide.
 
 
-This environment is shared with Dify engineers, who install the product by hand;
-their working deployment is then captured back into this repo. That inverts the
-usual GitOps direction, so two things are set up for it.
+This environment is shared with Dify engineers. They installed the product by
+hand at first; their working deployment was then captured back into this repo,
+and since 2026-09-26 ArgoCD installs it. That capture inverts the usual GitOps
+direction, so two things are set up for it.
 
 **`collaborationMode: true` (the default).** ArgoCD installs the dependencies
 once and then leaves the cluster alone — `selfHeal` and `prune` are both off.
@@ -198,8 +211,8 @@ deployment is captured and Git is genuinely the source of truth again.
 
 | Who | What |
 |---|---|
-| This repo / GitOps | Namespace, SCC and RBAC, PostgreSQL (with the three databases), Redis, Qdrant, object storage — the dependencies in place before anyone starts |
-| Dify engineers | The commercial `dify-enterprise` chart, License activation, and the values that actually work |
+| This repo / GitOps | Namespace, SCC and RBAC, PostgreSQL (with the three databases), Redis, Qdrant, object storage, and the `dify-enterprise` chart itself |
+| Dify engineers | License activation, and the values that actually work — changed in Git, not with `helm upgrade` |
 | Capture | `scripts/capture-deployment.sh` turns their result back into repo content |
 
 **Ask them to install with Helm rather than applying manifests**, so that
@@ -217,8 +230,7 @@ classes in use, and any non-Normal events. Credentials are redacted by
 reports what it touched.
 
 **Read every captured file before committing — this repository is public.**
-Never commit the `dify-enterprise` chart itself, License material, or anything
-from Dify's deployment manual.
+Never commit License material, or anything from Dify's deployment manual.
 
 ## What OpenShift changes
 

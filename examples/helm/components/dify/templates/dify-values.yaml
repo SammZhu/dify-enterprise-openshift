@@ -1,14 +1,5 @@
 {{- if .Values.dify.enabled }}
 {{- $ns := .Values.dify.namespace }}
-{{- /* Fail loudly rather than rendering dify-console.<empty> into every domain. */}}
-{{- $d := required "deployer.domain is empty - it must be injected by the Field Sourced Content workload (or passed with --set for local rendering)" .Values.deployer.domain }}
-{{- $h := .Values.dify.hosts }}
-{{- $console := printf "%s.%s" $h.consolePrefix $d }}
-{{- $api := printf "%s.%s" $h.apiPrefix $d }}
-{{- $app := printf "%s.%s" $h.appPrefix $d }}
-{{- $upload := printf "%s.%s" $h.uploadPrefix $d }}
-{{- $ent := printf "%s.%s" $h.enterprisePrefix $d }}
-{{- $trigger := printf "%s.%s" $h.triggerPrefix $d }}
 ---
 # =============================================================================
 # Cluster-ready values for the COMMERCIAL dify-enterprise Helm chart.
@@ -17,7 +8,11 @@
 # service names, generated credentials). Extract it and feed it to helm:
 #
 #   ./scripts/render-dify-values.sh {{ $ns }} > dify-values.yaml   # gitignored
-#   helm install dify <dify-chart-repo>/dify -n {{ $ns }} -f dify-values.yaml
+#   helm install dify dify-enterprise --repo https://charts.openshift.io \
+#     --version {{ .Values.dify.chart.version }} -n {{ $ns }} -f dify-values.yaml
+#
+# That is the manual path. With dify.chart.enabled, ArgoCD installs the chart
+# with these same values (chart-application.yaml).
 #
 # This ConfigMap contains NO credentials. Every secret value is an
 # @@secret:<name>/<key>@@ placeholder that render-dify-values.sh resolves
@@ -38,146 +33,5 @@ metadata:
     demo.redhat.com/application: "dify-enterprise"
 data:
   dify-values.yaml: |
-    global:
-      # --- Trace sampling -------------------------------------------------
-      # The chart defaults to 0.2: one request in five is traced, so the
-      # conversation you just demonstrated is usually absent from Observe ->
-      # Traces. Metrics are counters and are not affected. 1.0 traces every
-      # request; lower it where the overhead matters. Rendered as
-      # OTEL_SAMPLING_RATE into the api, worker, worker-beat, trigger-worker
-      # and plugin-daemon ConfigMaps.
-      otel:
-        samplingRate: "{{ .Values.dify.otel.samplingRate }}"
-
-      # --- The 6 domains Dify Enterprise requires -------------------------
-      consoleApiDomain: "{{ $console }}"
-      consoleWebDomain: "{{ $console }}"
-      serviceApiDomain: "{{ $api }}"
-      appApiDomain: "{{ $app }}"
-      appWebDomain: "{{ $app }}"
-      filesDomain: "{{ $upload }}"
-      enterpriseDomain: "{{ $ent }}"
-      triggerDomain: "{{ $trigger }}"
-      useTLS: true
-
-      rag:
-        etlType: "dify"
-        keywordDataSourceType: "object_storage"
-        topKMaxValue: 10
-        indexingMaxSegmentationTokensLength: 4000
-
-      # --- OpenShift mode ---------------------------------------------
-      # The chart has native OpenShift support: it creates Routes directly
-      # rather than relying on the router to convert Ingress objects. Turning
-      # this on is what produces the six edge-terminated Routes.
-      openshift:
-        enabled: true
-        routes:
-          enabled: true
-          tls:
-            termination: edge
-            insecureEdgeTerminationPolicy: Redirect
-          annotations:
-            # SSE / streaming responses die on the default 30s router timeout.
-            haproxy.router.openshift.io/timeout: "600s"
-            # Audit logs need the real client IP, not the router's.
-            haproxy.router.openshift.io/set-forwarded-headers: "append"
-
-    # Ingress off: with global.openshift.routes the chart creates Routes
-    # itself. Leaving both on exposes every hostname twice - an Ingress that
-    # the router converts, plus the chart's own Route for the same host.
-    ingress:
-      enabled: false
-
-    # --- External PostgreSQL ----------------------------------------------
-    # The dify / enterprise / audit databases are pre-created by the
-    # postgresql component; dify_plugin_daemon is created on first start.
-    externalDatabase:
-      enabled: true
-      engine: "postgres"
-      host: "dify-postgresql.{{ $ns }}.svc.cluster.local"
-      port: 5432
-      user: "@@secret:dify-postgresql/username@@"
-      password: "@@secret:dify-postgresql/password@@"
-      timezone: "UTC"
-      databases:
-        dify: "dify"
-        plugin_daemon: "dify_plugin_daemon"
-        enterprise: "enterprise"
-        audit: "audit"
-      dialectOptions:
-        postgres:
-          sslMode: "disable"
-          uriScheme: "postgresql"
-          extras: ""
-
-    # --- External Redis ----------------------------------------------------
-    externalRedis:
-      enabled: true
-      useSSL: false
-      host: "dify-redis.{{ $ns }}.svc.cluster.local"
-      port: 6379
-      username: ""
-      password: "@@secret:dify-redis/password@@"
-      db: 0
-
-    # --- Vector database ---------------------------------------------------
-    # externalQdrant is NESTED under vectorDB. Dify's documentation lists the
-    # two as separate top-level blocks, which is how this was first written -
-    # and a top-level externalQdrant is silently ignored, leaving the chart's
-    # placeholder default in place:
-    #
-    #   QDRANT_URL = http://your-qdrant-cluster-url.qdrant.tech/
-    #
-    # Nothing fails at install time. All 16 components come up healthy; the
-    # error only surfaces on the first document indexed, as a DNS failure
-    # several layers away from the cause.
-    vectorDB:
-      useExternal: true
-      externalType: "qdrant"
-      externalQdrant:
-        endpoint: "http://dify-qdrant.{{ $ns }}.svc.cluster.local:6333"
-        apiKey: "@@secret:dify-qdrant/apiKey@@"
-
-    # --- Persistent storage: S3 ------------------------------------------
-    # Default: ODF's Multicloud Object Gateway through an ObjectBucketClaim
-    # (components/objectstorage). The bucket holds uploads, plugin packages and
-    # the tenant private keys that decrypt model-provider credentials - losing
-    # it means re-entering every provider key.
-    persistence:
-      type: "s3"
-      s3:
-{{- if .Values.objectStorage.enabled }}
-        endpoint: "{{ .Values.objectStorage.endpoint }}"
-        accessKey: "@@secret:{{ .Values.objectStorage.claimName }}/AWS_ACCESS_KEY_ID@@"
-        secretKey: "@@secret:{{ .Values.objectStorage.claimName }}/AWS_SECRET_ACCESS_KEY@@"
-        region: "us-east-1"
-        bucketName: "{{ .Values.objectStorage.bucketName | default (printf "dify-%s" $ns) }}"
-{{- else }}
-        # MinIO needs an image you mirror yourself; see values.yaml.
-        endpoint: "http://dify-minio.{{ $ns }}.svc.cluster.local:9000"
-        accessKey: "@@secret:dify-minio/accessKey@@"
-        secretKey: "@@secret:dify-minio/secretKey@@"
-        region: "us-east-1"
-        bucketName: "@@secret:dify-minio/bucket@@"
-{{- end }}
-        # Path-style works for both. The chart already renders
-        # S3_USE_PATH_STYLE=true for the plugin daemon and audit service.
-        addressType: ""
-        useAwsManagedIam: false
-        useAwsS3: false
-
-    # --- Plugin image registry ---------------------------------------------
-    # Plugin packages are built into images IN-CLUSTER with Kaniko and pushed
-    # here. imageRepoSecret name is FIXED as "image-repo-secret" by Dify -
-    # create it with scripts/create-image-repo-secret.sh before installing.
-    plugin_connector:
-      imageRepoType: "{{ .Values.dify.pluginRegistry.imageRepoType }}"
-      imageRepoPrefix: "{{ .Values.dify.pluginRegistry.imageRepoPrefix }}"
-      imageRepoSecret: "image-repo-secret"
-      insecureImageRepo: {{ .Values.dify.pluginRegistry.insecureImageRepo }}
-      ecrRegion: "{{ .Values.dify.pluginRegistry.ecrRegion }}"
-
-    marketplace:
-      enabled: {{ .Values.dify.marketplaceEnabled }}
+{{ include "dify.chartValues" . | indent 4 }}
 {{- end }}

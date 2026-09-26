@@ -7,10 +7,14 @@ dify:
     samplingRate: "1.0"
   namespace: dify
   serviceAccountName: dify
-  chartAvailable: false
-  chartRepo: ""
-  chartName: dify
-  chartVersion: ""
+  # PostgreSQL user. Not a secret; must match prereqs.secrets.postgresqlUsername.
+  dbUsername: dify
+  chart:
+    enabled: true
+    repoURL: https://charts.openshift.io
+    name: dify-enterprise
+    version: 3.9.8
+    releaseName: dify
   hosts:
     consolePrefix: dify-console
     apiPrefix: dify-api
@@ -24,6 +28,18 @@ dify:
     insecureImageRepo: true
     ecrRegion: ""
   marketplaceEnabled: true
+
+# Passed in by the App-of-Apps: where the chart Application is created, and
+# where the resolver Job's manifests come from.
+argocd:
+  namespace: openshift-gitops
+  project: default
+  appName: field-content-dify-chart
+gitops:
+  repoUrl: ""
+  revision: main
+  basePath: examples/helm
+collaborationMode: true
 
 deployer:
   domain: ""

@@ -7,7 +7,8 @@ Two ways a credential reached this public repository before this existed:
   - nothing stopped it once staged
 
 This checks what is actually staged, not file names alone. Placeholders are
-allowed: @@secret:name/key@@, {{ template }}, <angle brackets>, $VARS.
+allowed: @@secret:name/key@@ (also URL-encoded, as the Dify chart writes it into
+connection strings), {{ template }}, <angle brackets>, $VARS.
 
   python3 scripts/check-no-credentials.py            # staged changes (pre-commit)
   python3 scripts/check-no-credentials.py FILE...    # arbitrary files
@@ -20,9 +21,14 @@ KEYWORD = re.compile(
     r'api_?key|apikey|client_?secret|token))\s*[:=]\s*["\']?([^\s"\'#,}]+)')
 URL_CRED = re.compile(r'://[^/\s:@]*:([^@\s/]+)@')        # scheme://user:pass@host
 PLACEHOLDER = re.compile(r'^(@@secret:|\{\{|<|\$|\*+$|changeme$|example|xxx)', re.I)
+# The whole value, not a prefix: %40%40secret%3A<name>%2F<key>%40%40
+URLENC_PLACEHOLDER = re.compile(r'%40%40secret%3A[A-Za-z0-9_.-]+%2F[A-Za-z0-9_.-]+%40%40')
+
+def placeholder(v):
+    return bool(PLACEHOLDER.match(v)) or bool(URLENC_PLACEHOLDER.fullmatch(v))
 
 def literal(v):
-    return len(v) >= 12 and not PLACEHOLDER.match(v)
+    return len(v) >= 12 and not placeholder(v)
 
 def scan(name, text):
     hits = []
@@ -31,7 +37,7 @@ def scan(name, text):
             if literal(m.group(2)):
                 hits.append((n, f"{m.group(1)} = <literal, {len(m.group(2))} chars>"))
         for m in URL_CRED.finditer(line):
-            if literal(m.group(1)) or (len(m.group(1)) >= 8 and not PLACEHOLDER.match(m.group(1))):
+            if literal(m.group(1)) or (len(m.group(1)) >= 8 and not placeholder(m.group(1))):
                 hits.append((n, f"credential inside a URL ({len(m.group(1))} chars)"))
     return hits
 

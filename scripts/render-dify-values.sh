@@ -9,8 +9,13 @@
 #
 # Usage:
 #   ./scripts/render-dify-values.sh [namespace] > dify-values.yaml
-#   helm upgrade --install dify <chart-repo>/dify -n dify -f dify-values.yaml --force
+#   helm upgrade --install dify dify-enterprise --repo https://charts.openshift.io \
+#     --version 3.9.8 -n dify -f dify-values.yaml --force
 #     (--force: OpenShift and the chart both manage imagePullSecrets)
+#
+# Only for a manual install. Where the App-of-Apps runs, ArgoCD installs the
+# chart and resolves the same placeholders on the cluster - see
+# docs/gitops-dify-chart.md.
 #
 set -euo pipefail
 

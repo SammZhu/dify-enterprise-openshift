@@ -1,0 +1,11 @@
+# Passed in by the dify-chart Application (components/dify/templates/chart-application.yaml).
+namespace: dify
+releaseName: dify
+domain: ""
+dbUsername: dify
+cliImage: quay.io/openshift/origin-cli:latest
+# From components/dify/files/secret-fields.yaml:
+#   fields:  [{kind, name, key, template}] - the keys the Job writes
+#   sources: [<cluster Secret>/<key>] the placeholders point at
+fields: []
+sources: []

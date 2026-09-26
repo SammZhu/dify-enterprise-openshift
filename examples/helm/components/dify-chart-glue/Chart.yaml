@@ -1,0 +1,6 @@
+apiVersion: v2
+name: dify-chart-glue
+description: Resolves the credential placeholders in the certified dify-enterprise chart on the cluster, so they never pass through ArgoCD or Git
+type: application
+version: 0.1.0
+appVersion: "3.9.8"

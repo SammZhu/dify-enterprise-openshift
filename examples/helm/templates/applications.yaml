@@ -360,6 +360,15 @@ spec:
 {{ toYaml .Values.components.dify | indent 10 }}
           namespace: {{ $common.ns }}
           serviceAccountName: {{ .Values.components.prereqs.serviceAccountName }}
+        argocd:
+          namespace: {{ $common.argons }}
+          project: {{ $common.project }}
+          appName: {{ .Release.Name }}-dify-chart
+        gitops:
+          repoUrl: {{ $common.repoURL }}
+          revision: {{ $common.revision }}
+          basePath: {{ $common.base }}
+        collaborationMode: {{ .Values.collaborationMode }}
         deployer:
           domain: {{ .Values.deployer.domain | quote }}
           apiUrl: {{ .Values.deployer.apiUrl | quote }}

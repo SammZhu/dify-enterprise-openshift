@@ -1,0 +1,135 @@
+{{- $ns := .Values.namespace }}
+{{- $release := .Values.releaseName }}
+{{- $sources := list }}
+{{- range .Values.sources }}{{ $sources = append $sources (splitList "/" . | first) }}{{ end }}
+{{- $sources = $sources | uniq | sortAlpha }}
+{{- $secretTargets := list }}
+{{- $cmTargets := list }}
+{{- range .Values.fields }}
+{{- if eq .kind "Secret" }}{{ $secretTargets = append $secretTargets .name }}{{ else }}{{ $cmTargets = append $cmTargets .name }}{{ end }}
+{{- end }}
+# =============================================================================
+# Fills the credentials the dify-enterprise chart was rendered without.
+# =============================================================================
+# The chart has no way to reference an existing Secret: it renders credentials
+# from its values into Secrets and, inside connection strings, ConfigMaps.
+# ArgoCD therefore installs it with @@secret:<name>/<key>@@ placeholders and
+# keeps the live value of those keys; this Job computes that value from the
+# key's template and the cluster's Secrets. See docs/gitops-dify-chart.md.
+#
+# It may read only the source Secrets the placeholders point at, and patch only
+# the chart objects that hold them.
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dify-chart-resolver
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dify-chart-resolver
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+    resourceNames:
+{{ toYaml $sources | indent 6 }}
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, patch]
+    resourceNames:
+{{ toYaml ($secretTargets | uniq | sortAlpha) | indent 6 }}
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, patch]
+    resourceNames:
+{{ toYaml ($cmTargets | uniq | sortAlpha) | indent 6 }}
+  # rollout restart: environment from Secrets is only read at container start.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dify-chart-resolver
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dify-chart-resolver
+subjects:
+  - kind: ServiceAccount
+    name: dify-chart-resolver
+    namespace: {{ $ns }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dify-chart-resolver
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  resolve.py: |
+{{ .Files.Get "files/resolve.py" | indent 4 }}
+  # Keys the Job writes, each with its template (placeholders, no credentials).
+  fields.json: |
+{{ .Values.fields | toJson | indent 4 }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dify-chart-resolver
+  namespace: {{ $ns }}
+  annotations:
+    # Same wave as the chart: on a fresh install it waits for the Secrets to
+    # appear. Components that start before it has run fail to log in and are
+    # restarted by it.
+    argocd.argoproj.io/sync-wave: "0"
+    # A completed Job cannot be updated in place; see dify-prereqs'
+    # generate-secrets-job.yaml. The job is idempotent.
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        # Every ServiceAccount in this namespace may use anyuid. This job needs
+        # nothing of the kind.
+        openshift.io/required-scc: restricted-v2
+    spec:
+      serviceAccountName: dify-chart-resolver
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: resolve
+          image: {{ .Values.cliImage }}
+          command: [python3, /scripts/resolve.py]
+          env:
+            - {name: HOME, value: /tmp}
+            - {name: NS, value: {{ $ns | quote }}}
+            - {name: RELEASE, value: {{ $release | quote }}}
+            - {name: DOMAIN, value: {{ required "domain is required" .Values.domain | quote }}}
+            - {name: DB_USERNAME, value: {{ .Values.dbUsername | quote }}}
+            - {name: FIELDS_FILE, value: /config/fields.json}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /scripts}
+            - {name: config, mountPath: /config}
+      volumes:
+        - name: config
+          configMap: {name: dify-chart-resolver}

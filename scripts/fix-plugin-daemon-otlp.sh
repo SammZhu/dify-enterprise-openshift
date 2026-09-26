@@ -17,6 +17,9 @@
 # ConfigMap. `helm upgrade` renders it again and undoes this: run the script
 # after every upgrade until the chart is fixed.
 #
+# Only for a manual install. Where ArgoCD installs the chart, the resolver Job
+# in components/dify-chart-glue does the same on every sync.
+#
 # Usage:  ./scripts/fix-plugin-daemon-otlp.sh [namespace] [release]
 #
 set -euo pipefail

@@ -214,11 +214,17 @@ components:
     # 0.2; 1.0 makes every conversation findable in Observe -> Traces.
     otel:
       samplingRate: "1.0"
-    # Set to true once you have the chart repo credentials; see README.
-    chartAvailable: false
-    chartRepo: ""        # e.g. https://<dify-provided-helm-repo>
-    chartName: dify
-    chartVersion: ""
+    # The product itself: Red Hat's certified dify-enterprise chart, installed
+    # by ArgoCD. Not Dify's public dify/dify chart - that one has no Routes and
+    # no OpenShift RBAC. Credentials reach it as placeholders resolved on the
+    # cluster; see docs/gitops-dify-chart.md. To upgrade, change version here
+    # and run scripts/gen-dify-secret-fields.py.
+    chart:
+      enabled: true
+      repoURL: https://charts.openshift.io
+      name: dify-enterprise
+      version: 3.9.8
+      releaseName: dify
 
     # The 6 hostnames Dify Enterprise requires. Rendered against deployer.domain.
     hosts:

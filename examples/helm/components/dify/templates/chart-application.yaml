@@ -1,0 +1,90 @@
+{{- if and .Values.dify.enabled .Values.dify.chart.enabled }}
+{{- $c := .Values.dify.chart }}
+{{- $f := .Files.Get "files/secret-fields.yaml" | fromYaml }}
+{{- if or (ne (toString $f.chartVersion) (toString $c.version)) (ne $f.releaseName $c.releaseName) (ne $f.namespace .Values.dify.namespace) }}
+{{- fail (printf "files/secret-fields.yaml was generated for chart %v / release %s / namespace %s, but the values ask for %v / %s / %s - run scripts/gen-dify-secret-fields.py" $f.chartVersion $f.releaseName $f.namespace $c.version $c.releaseName .Values.dify.namespace) }}
+{{- end }}
+{{- $byObject := dict }}
+{{- range $f.fields }}
+{{- $k := printf "%s/%s" .kind .name }}
+{{- $_ := set $byObject $k (append (get $byObject $k | default list) .key) }}
+{{- end }}
+---
+# =============================================================================
+# Dify Enterprise itself, installed by ArgoCD
+# =============================================================================
+# Source 1: Red Hat's certified dify-enterprise chart from charts.openshift.io -
+#   not Dify's public dify/dify chart, which has no Routes and no OpenShift
+#   RBAC. Values are the same as the dify-values ConfigMap, credentials
+#   included only as @@secret:<name>/<key>@@ placeholders.
+# Source 2: components/dify-chart-glue - a Job that fills those placeholders
+#   from the cluster's Secrets, so no credential passes through ArgoCD or Git.
+#
+# Once a key holds a live value ArgoCD must not put the placeholder back:
+# every placeholder key is listed below under ignoreDifferences, and
+# RespectIgnoreDifferences makes a sync keep the live value.
+# See docs/gitops-dify-chart.md.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Values.argocd.appName }}
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ .Values.argocd.project }}
+  sources:
+    - repoURL: {{ $c.repoURL }}
+      chart: {{ $c.name }}
+      targetRevision: {{ $c.version | quote }}
+      helm:
+        releaseName: {{ $c.releaseName }}
+        valuesObject:
+{{ include "dify.chartValues" . | fromYaml | toYaml | indent 10 }}
+    - repoURL: {{ .Values.gitops.repoUrl }}
+      targetRevision: {{ .Values.gitops.revision }}
+      path: {{ .Values.gitops.basePath }}/components/dify-chart-glue
+      helm:
+        valuesObject:
+          namespace: {{ .Values.dify.namespace }}
+          releaseName: {{ $c.releaseName }}
+          domain: {{ .Values.deployer.domain | quote }}
+          dbUsername: {{ .Values.dify.dbUsername | quote }}
+          fields:
+{{ toYaml $f.fields | indent 12 }}
+          sources:
+{{ toYaml $f.sources | indent 12 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.dify.namespace }}
+  # Keys the resolver Job owns: credentials (as placeholder templates) and the
+  # plugin daemon's OTLP endpoints (the chart points them at the gRPC port;
+  # the daemon speaks HTTP only). A Secret's key is listed under stringData
+  # too - the API server merges stringData over data.
+  ignoreDifferences:
+{{- range $obj, $keys := $byObject }}
+{{- $kind := splitList "/" $obj | first }}
+    - kind: {{ $kind }}
+      name: {{ splitList "/" $obj | last }}
+      jqPathExpressions:
+{{- range $keys }}
+        - .data.{{ . }}
+{{- if eq $kind "Secret" }}
+        - .stringData.{{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+    # OpenShift adds a -dockercfg- pull secret to every ServiceAccount.
+    - kind: ServiceAccount
+      jqPathExpressions:
+        - '.imagePullSecrets[] | select(.name | contains("-dockercfg-"))'
+  syncPolicy:
+    automated:
+      prune: {{ not .Values.collaborationMode }}
+      selfHeal: {{ not .Values.collaborationMode }}
+    syncOptions:
+      - RespectIgnoreDifferences=true
+{{- end }}

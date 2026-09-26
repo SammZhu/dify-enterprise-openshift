@@ -1,7 +1,9 @@
 # Environment handover
 
-An OpenShift cluster with every Dify Enterprise dependency already running and
-verified. You install the Dify Enterprise chart; everything it needs is here.
+An OpenShift cluster with Dify Enterprise and every dependency running and
+verified. Since 2026-09-26 Dify itself is installed by ArgoCD from Red Hat's
+certified chart, like everything else here — **change it in Git, not with
+`helm upgrade`** (see change 5 below).
 
 ## Access
 
@@ -41,11 +43,10 @@ queried, Redis pinged, the bucket listed, the embedder asked for a real vector.
 Credentials are in Secrets in the `dify` namespace. **You do not need to look
 them up** — see the next section.
 
-## Changed on 2026-09-26 — read before the next `helm upgrade`
+## Changed on 2026-09-26
 
-Four things changed under the running installation. All four are already applied to
-the chart's generated Secrets and ConfigMaps, so everything works now — but
-**Helm's stored values are stale**.
+Five things changed under the running installation. All are applied, so
+everything works now — but **Helm's stored values are stale** (see 5).
 
 1. **Every data-tier credential was rotated** (PostgreSQL, Redis, Qdrant, object
    storage). They had been exposed; the old values are now rejected.
@@ -65,20 +66,24 @@ the chart's generated Secrets and ConfigMaps, so everything works now — but
 4. **The plugin daemon's telemetry now reaches the collector.** Its three
    `OTLP_*_ENDPOINT` values in `plugin-daemon-config` were moved from `:4317`
    to `:4318`; before that every trace and metric export failed (item 7 below).
-   This is not a chart value, so **after every `helm upgrade` run
-   `./scripts/fix-plugin-daemon-otlp.sh`** — it is safe to re-run, does nothing
-   if already applied, and checks for export errors afterwards.
+   This is not a chart value; ArgoCD's resolver Job (change 5) re-applies it on
+   every sync.
 
-So before any `helm upgrade`, **re-render the values**:
+5. **Dify is installed by ArgoCD** (Application `field-content-dify-chart`),
+   from Red Hat's certified `dify-enterprise` chart at `charts.openshift.io` —
+   the same chart and version you installed, now with values from Git. The
+   chart cannot reference an existing Secret, so ArgoCD renders it with
+   credential placeholders and a Job fills them in on the cluster: no
+   credential passes through ArgoCD or Git.
+   [gitops-dify-chart.md](gitops-dify-chart.md) has the details.
 
-```bash
-./scripts/render-dify-values.sh dify > dify-values.yaml
-helm upgrade dify <chart> -n dify -f dify-values.yaml --force
-```
-
-**Do not use `--reuse-values`.** It would write the old, now-rejected credentials
-and the old MinIO endpoint back into the chart's Secrets, and Dify would lose its
-database, Redis, vector store and file storage at once.
+   **Please do not `helm upgrade` any more.** Your Helm release is still on the
+   cluster, but its stored values predate changes 1 and 2. `helm upgrade` —
+   above all with `--reuse-values` — would write the old, now-rejected
+   credentials and the old MinIO endpoint back into the chart's Secrets, and
+   Dify would lose its database, Redis, vector store and file storage at once.
+   To change a value, change it in `examples/helm` and push; to upgrade Dify,
+   change `components.dify.chart.version`.
 
 One thing to look at on your side: `dify-dify-enterprise-plugin-daemon-debug-svc`
 is a NodePort (32489), exposing a debug port on every node.
@@ -212,7 +217,9 @@ it matters for a customer deployment.
 
 ## Installing
 
-Everything is wired up for you. Do not hand-write a values file:
+On this cluster ArgoCD does it; see change 5. What follows is for installing
+the same thing by hand on a cluster without this GitOps setup. Do not
+hand-write a values file:
 
 ```bash
 git clone https://github.com/SammZhu/dify-enterprise-openshift.git
@@ -221,7 +228,9 @@ cd dify-enterprise-openshift
 ./scripts/preflight-check.sh dify        # confirm the environment is ready
 ./scripts/render-dify-values.sh dify > dify-values.yaml
 
-helm upgrade --install dify <your-chart-repo>/dify -n dify -f dify-values.yaml --force
+helm upgrade --install dify dify-enterprise --repo https://charts.openshift.io \
+  --version 3.9.8 -n dify -f dify-values.yaml --force
+./scripts/fix-plugin-daemon-otlp.sh dify
 ```
 
 `--force` matters on OpenShift: the service-account-controller injects
