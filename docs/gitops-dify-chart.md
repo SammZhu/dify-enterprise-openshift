@@ -107,6 +107,15 @@ objects: 76 unchanged, and
 | `ENTERPRISE_OTEL_SAMPLING_RATE` 0.2 → 1.0 in 3 ConfigMaps | The repo's sampling rate; the hand-applied change had set only `OTEL_SAMPLING_RATE` |
 | ServiceAccount `plugin-workload`'s `-dockercfg-` pull secret | The chart sets that SA's `imagePullSecrets` as a whole list; OpenShift adds its own entry back |
 
+**Result.** ArgoCD synced at 16:49 UTC and Dify rolled once; healthy two
+minutes later. All 91 objects kept their uid and carry ArgoCD's tracking
+annotation; all 33 credential keys hash the same as before the switch; the
+resolver Job, running under `restricted-v2`, found every key up to date and
+changed nothing. The SA kept its pull secret, the helm test hook was not run.
+Afterwards: the consoles answer, no authentication or connection error in any
+component's log, and 200 traces from the API and the plugin daemon within
+minutes.
+
 ## Upgrading Dify
 
 Change `components.dify.chart.version` in `examples/helm/values.yaml`, then:
