@@ -154,12 +154,23 @@ Worth stating plainly in front of a customer:
    Dify's `dataset_retriever_resources` table, both of which missed searches
    that the log shows returning HTTP 200.
 
-1. **One conversation is several unconnected traces.** Retrieval is one trace,
-   the LLM call another. Dify streams the generation from a separate thread and
-   the trace context does not follow it, so there is no single waterfall of
-   "5 s = 0.3 s retrieval + 4.5 s model". The pieces have to be lined up by time.
-   The API logs the mechanism itself as `Failed to detach context` at ERROR
-   severity, once per streamed answer.
+1. **One conversation is several unconnected traces — and now we know why.**
+   One knowledge-base question at 12:23:52, traced end to end by the trace IDs
+   in the API's and the plugin daemon's own log lines:
+
+   | Trace | What it holds | Duration | In Tempo |
+   |---|---|---|---|
+   | request | `POST /console/api/installed-apps/…` — returns as soon as streaming starts | 120 ms | yes |
+   | retrieval | `RetrievalService.retrieve`, including the embedding call into the daemon (API side 249.1 ms, daemon side 248.1 ms) | 402 ms | yes |
+   | **model call** | API's `POST …/dispatch/llm/invoke` **as a root span**, the daemon's server span beneath it | 1154 ms / **8892 ms** | yes |
+   | after generation | recording provider usage, then `Failed to detach context` | — | **no** (404) |
+
+   The generation runs in a thread that carries no trace context: the API's own
+   log line for the model call has an **empty `trace_id`**. So the HTTP call to
+   the daemon starts a new trace instead of joining the conversation, and the
+   bookkeeping after it is lost entirely. The pieces have to be lined up by
+   time.
+
 2. **The plugin daemon was invisible — because every export failed.** It did
    export, 128 times in ten minutes, and every attempt failed:
    `traces export: Post "http://…collector-svc:4317/v1/traces": … malformed HTTP
@@ -169,9 +180,15 @@ Worth stating plainly in front of a customer:
    (`scripts/fix-plugin-daemon-otlp.sh`) — the endpoint is not a chart value, so
    `helm upgrade` undoes it and the script must be re-run. Afterwards: zero
    failures, `dify-plugin-daemon` appears as a service, and **its spans join the
-   caller's trace** — see below. Still not visible: the embedding call itself
-   did not appear as a daemon span, and the hop from the daemon into the plugin
-   pod and on to the model is not traced. Neither was investigated.
+   caller's trace** — see below. Still not traced: the hop from the daemon into
+   the plugin pod and on to the model provider.
+
+   It also settled a guess recorded earlier. The API's client span for a model
+   call measured ~1 s while the model took 4–5 s; the suspicion was that the
+   span ends when response headers arrive. Measured on one call: **API side
+   1154 ms, daemon side 8892 ms**. The API span ends at the first streamed
+   response — roughly time to first token — and only the daemon's span covers
+   the whole generation.
 3. **Noise.** Background Redis `PUBLISH`, health checks and orphaned spans
    (`<root span not yet received>`, whose parent comes from a component that
    does not export) far outnumber conversations.
@@ -196,6 +213,7 @@ With the noise above, a fresh conversation is easily absent from the list. Use
 | To see | TraceQL |
 |---|---|
 | Knowledge-base retrieval, broken down | `{ name =~ ".*RetrievalService.retrieve" }` |
+| **Every model call, with full generation time** (needs the plugin-daemon patch) | `{ name =~ ".*dispatch/llm/invoke" }` |
 | Every call to a model or plugin | `{ span.http.url =~ ".*plugin-daemon.*" }` |
 | **Every call leaving the cluster** | `{ span.http.url =~ "https://.*" }` |
 | Only the slow ones | `{ resource.service.name = "langgenius/dify" && duration > 100ms }` |

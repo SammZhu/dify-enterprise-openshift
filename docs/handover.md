@@ -130,9 +130,13 @@ it matters for a customer deployment.
 5. **Trace sampling defaults to 0.2** (`global.otel.samplingRate`), so a
    demonstrated conversation is usually missing from the trace view. Set to
    1.0 here.
-6. **One conversation arrives as several unconnected traces.** The API logs
-   `Failed to detach context` once per streamed answer; retrieval and the model
-   call end up in separate traces.
+6. **One conversation arrives as several unconnected traces.** The generation
+   thread carries no trace context — the API's log line for the model call has
+   an empty `trace_id` — so the call to the plugin daemon starts a new trace
+   instead of joining the conversation, and the work after it (provider usage)
+   ends with `Failed to detach context` and never reaches the collector. One
+   question produced four traces; one was lost. Details in
+   [tracing.md](tracing.md).
 7. **The plugin daemon's telemetry goes to the wrong port.** The chart renders
    `:4317` (gRPC) for every component; the plugin daemon ignores
    `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`, speaks OTLP/HTTP, and every export fails
