@@ -20,6 +20,10 @@ own telemetry scraped by the platform's Prometheus, no new operator required:
 **[docs/monitoring.md](docs/monitoring.md)**. Traces in OpenShift's own tracing
 stack, and what they do and do not show: **[docs/tracing.md](docs/tracing.md)**.
 
+**Demonstrating it:** where a conversation's time goes — the model call, the
+retrieval, the vector search — step by step in the OpenShift console:
+**[docs/tracing.md#demo-how-long-did-the-model-take](docs/tracing.md#demo-how-long-did-the-model-take)**.
+
 **Everything this puts on OpenShift** — every component, setting and object, what
 a cluster administrator is asked to approve, which parts arrive from GitOps and
 which by hand, and how deep metrics, traces, logs and alerts are integrated:

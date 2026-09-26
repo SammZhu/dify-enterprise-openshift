@@ -158,9 +158,21 @@ it matters for a customer deployment.
     uploaded file in object storage and its 28 vectors in Qdrant remain. Is
     cleanup deferred to a scheduled job (there is a `retention` queue), or not
     dispatched at all?
-13. **`trigger_refresh_publisher` holds 2528 unconsumed messages** in Redis
-    (broker db 1); no worker lists that queue. Observed, not investigated —
-    unbounded growth if nothing drains it.
+13. **A queue nothing consumes, growing by one message a minute.** Beat
+    schedules `trigger_provider_refresh` every minute
+    (`ENABLE_TRIGGER_PROVIDER_REFRESH_TASK` defaults on). The task is declared
+    on queue `trigger_refresh_publisher`
+    (`schedule/trigger_provider_refresh_task.py:52`), but no worker listens on
+    it: the chart's worker and trigger-worker consume `trigger_refresh_executor`,
+    and **Dify's own `docker/entrypoint.sh` default queue list omits it too** —
+    so this is upstream, not the chart. The task has never run. Here: 2547
+    messages, ~1.2 KB each, **3.0 MB — 56% of Redis's memory** — growing
+    ~1.7 MB per day of uptime without bound. No functional loss on this cluster
+    (zero trigger subscriptions), but anyone using trigger plugins would find
+    their subscriptions never refreshed. The chart exposes no value for worker
+    queues. Related: the entrypoint's defaults include `dataset_summary`, which
+    the chart's worker does not consume either — summary indexing tasks would
+    pile up the same way (none queued here yet).
 
 **Documentation and images**
 

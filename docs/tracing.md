@@ -9,6 +9,61 @@ statement, every outbound HTTP call — show up in the OpenShift console under
 Measured on OpenShift 4.21.32, Dify Enterprise 3.9.8, Tempo Operator 0.22,
 Red Hat build of OpenTelemetry 0.158, Cluster Observability Operator 1.5.2.
 
+## Demo: how long did the model take?
+
+The question a platform audience asks first. Rehearsed on this cluster; every
+number below is from a real conversation.
+
+**Before the audience arrives**
+
+1. Ask the assistant one question after the cluster has started. The first
+   retrieval after a restart took 2.5 s against 0.2 s warm — nobody wants the
+   cold one on screen.
+2. Check the plugin-daemon patch is in place (`scripts/fix-plugin-daemon-otlp.sh`
+   prints *Nothing to do*). Without it the model call does not appear at all.
+
+**On screen**
+
+3. Ask a knowledge-base question in the Dify app. Note the time.
+4. OpenShift console → **Observe → Traces**. Instance `dify-observability /
+   dify-traces`, tenant `dify`.
+5. **Show query**, paste, **Run query**:
+
+   ```
+   { name =~ ".*dispatch/llm/invoke" }
+   ```
+
+   A trace started in the last minute or two may not be listed yet — search
+   lags by one to four minutes. Wait, or use the retrieval query below while it
+   catches up.
+6. Open the trace. It has two spans:
+
+   | Span | Service | What it measures |
+   |---|---|---|
+   | `POST` | `langgenius/dify` | Until the first streamed response — **roughly time to first token** (1154 ms in the rehearsal) |
+   | `POST /plugin/:tenant_id/dispatch/llm/invoke` | `dify-plugin-daemon` | **The whole generation** (8892 ms) |
+
+   The second is the answer to "how long did the model take". Dify recorded
+   9.46 s of provider latency for that message; 8.89 s of it is this span.
+7. For "and how much of that was our data?" —
+
+   ```
+   { name =~ ".*RetrievalService.retrieve" }
+   ```
+
+   Retrieval took 199–417 ms warm. Open it: the embedding call into the plugin
+   daemon, the vector search in Qdrant (70–120 ms) and the full-text search sit
+   side by side. Qdrant is never the slow part.
+
+**For the aggregate rather than one request:** Observe → Dashboards → *Dify
+Enterprise* → *Message latency (p50 / p95 / p99)*. Metrics are counters, not
+sampled, so this covers every message.
+
+**Say plainly if asked:** a conversation arrives as separate traces (request,
+retrieval, model call) rather than one waterfall — Dify's generation thread does
+not carry the trace context. The pieces line up by time. The hop from the
+plugin daemon into the model provider itself is not traced.
+
 ## What it adds to the metrics that were already there
 
 Metrics were already flowing without any push: the platform's Prometheus
