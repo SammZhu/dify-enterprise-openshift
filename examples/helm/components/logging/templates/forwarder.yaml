@@ -1,0 +1,69 @@
+{{- $ns := .Values.logging.namespace }}
+---
+# Least privilege: this collector may read application logs - not
+# infrastructure, not audit - and write to the LokiStack.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dify-log-collector
+  namespace: {{ $ns }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dify-log-collector-read-application
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: collect-application-logs}
+subjects: [{kind: ServiceAccount, name: dify-log-collector, namespace: {{ $ns }}}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dify-log-collector-write-loki
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: logging-collector-logs-writer}
+subjects: [{kind: ServiceAccount, name: dify-log-collector, namespace: {{ $ns }}}]
+---
+apiVersion: observability.openshift.io/v1
+kind: ClusterLogForwarder
+metadata:
+  name: dify-logs
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  serviceAccount: {name: dify-log-collector}
+  inputs:
+    - name: dify-apps
+      type: application
+      application:
+        includes:
+{{- range .Values.logging.namespaces }}
+          - namespace: {{ . }}
+{{- end }}
+  outputs:
+    - name: lokistack
+      type: lokiStack
+      lokiStack:
+        target: {name: logging-loki, namespace: {{ $ns }}}
+        authentication:
+          token: {from: serviceAccount}
+      tls:
+        ca: {key: service-ca.crt, configMapName: openshift-service-ca.crt}
+  pipelines:
+    - name: dify-to-loki
+      inputRefs: [dify-apps]
+      outputRefs: [lokistack]
+---
+# Adds Observe -> Logs to the console. Needs the Cluster Observability
+# Operator, which the tracing component installs.
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: logging
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  type: Logging
+  logging:
+    lokiStack: {name: logging-loki}

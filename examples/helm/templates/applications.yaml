@@ -6,6 +6,7 @@
 #   1  data tier  - PostgreSQL, Redis, Qdrant, object storage (MCG)
 #   2  dify       - Dify Enterprise itself
 #   3  tracing    - optional: Tempo + a platform-owned OTel collector
+#   3  logging    - optional: LokiStack + a least-privilege log forwarder
 # =============================================================================
 
 {{- $common := dict "repoURL" .Values.gitops.repoUrl "revision" .Values.gitops.revision "base" .Values.gitops.basePath "argons" .Values.argocd.namespace "project" .Values.argocd.project "ns" .Values.namespace }}
@@ -429,6 +430,46 @@ spec:
       - CreateNamespace=true
     # The first sync creates Subscriptions whose CRDs arrive minutes later;
     # the Tempo, collector and UIPlugin objects succeed on a retry.
+    retry:
+      limit: 10
+      backoff: {duration: 30s, factor: 2, maxDuration: 5m}
+{{- end }}
+
+{{- if .Values.components.logging.enabled }}
+---
+# Logs into OpenShift's own logging stack. Off by default: it installs two
+# cluster-level operators. The console's Logs page needs the Cluster
+# Observability Operator, which the tracing component installs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-logging
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/logging
+    helm:
+      valuesObject:
+        logging:
+{{ toYaml .Values.components.logging | indent 10 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.components.logging.namespace }}
+  syncPolicy:
+    automated:
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
+    syncOptions:
+      - CreateNamespace=true
     retry:
       limit: 10
       backoff: {duration: 30s, factor: 2, maxDuration: 5m}

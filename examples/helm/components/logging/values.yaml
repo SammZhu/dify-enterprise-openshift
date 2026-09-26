@@ -1,0 +1,14 @@
+logging:
+  namespace: openshift-logging
+  installOperators: true
+  channel: stable-6.6
+  # 1x.pico is the smallest size Red Hat supports. 1x.demo is smaller and is
+  # explicitly unsupported - the same reason Tempo runs multi-tenant here.
+  size: 1x.pico
+  storageClassName: ocs-external-storagecluster-ceph-rbd
+  bucketName: loki-dify-logs
+  # Only these namespaces' application logs are collected; no infrastructure
+  # or audit logs.
+  namespaces: [dify, dify-observability]
+  # Needs `oc` on PATH.
+  cliImage: quay.io/openshift/origin-cli:latest

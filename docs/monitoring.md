@@ -187,6 +187,54 @@ leading `row` panel, and no stray empty `rows` key. Writing the JSON from
 scratch is how you spend an afternoon on a dashboard that silently never
 appears.
 
+## Alerts
+
+`components/dify-prereqs/templates/prometheusrule.yaml` (on by default,
+`monitoring.alerts`) defines four rules. They are evaluated by user-workload
+monitoring and delivered to the platform Alertmanager — **Observe → Alerting**.
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `DifyTelemetryScrapeFailing` | neither Prometheus replica can scrape the collector for 5 min | warning |
+| `DifyTelemetryTargetMissing` | the scrape target is gone for 15 min — the ServiceMonitor matches nothing | warning |
+| `DifySlowAnswers` | over 15 min, more than 25% of answers took longer than 25 s (and there was traffic) | warning |
+| `DifyWorkspaceTokenBurn` | a workspace used more than 100 000 tokens in an hour | info |
+
+The second one exists because of the failure mode that raises nothing: after a
+chart upgrade the selector stops matching, the target disappears, and `up`
+does not drop to 0 — it ceases to exist.
+
+**Verified end to end.** All four rules loaded and were `inactive`, which
+matched the cluster at the time (scrape healthy, no traffic in the window,
+~17 000 tokens in the last hour). A temporary always-firing rule then went
+`firing` and reached Alertmanager within 40 seconds, proving the delivery path;
+it was removed afterwards. None of the four has fired for real.
+
+### Two bugs the rules had before they were checked
+
+Both would have produced a rule that loads cleanly and never fires.
+
+**The bucket label is `"25.0"`, not `"25"`.** The first draft selected
+`le="25"`. Prometheus stores the label as a float string, so that selector
+matched nothing: `DifySlowAnswers` evaluated to an empty result, forever, with
+no error anywhere. The template now formats the value itself
+(`printf "%.1f"`), and the threshold must be one of the histogram's bucket
+edges.
+
+**Helm's `mul` truncates.** `mul 0.25 100` rendered the summary as *"More than
+0% of answers…"*. The threshold is now a whole percentage in values and divided
+in PromQL (`> 25 / 100`).
+
+### Why not a p95 alert
+
+The latency histogram uses OpenTelemetry's default buckets — `0, 5, 10, 25, 50,
+75, 100, 250 …` — which are sized for milliseconds, on a metric in seconds.
+Between 10 and 25 s there is no edge, so any quantile there is an
+interpolation: the dashboard showed a p95 of 22.75 s while individual answers
+measured 7–18 s. A bucket edge is exact, so the alert asks "what share took
+longer than 25 s" instead. The dashboard's p50/p95/p99 panel has the same
+coarseness; read it as a trend, not a measurement.
+
 ## Where to look at it
 
 There is no standalone Prometheus web UI. OpenShift removed it in 4.11 — on
@@ -216,8 +264,9 @@ curl -sk -H "Authorization: Bearer $(oc whoami -t)" \
 
 ## What is still missing
 
-Nothing, as of 2026-09-26 — traces are in [tracing.md](tracing.md). Metrics
-were the part that needed no new operator; traces are the part that did.
+Nothing, as of 2026-09-26: traces are in [tracing.md](tracing.md) and logs in
+[logging.md](logging.md). Metrics and alerts were the part that needed no new
+operator; traces and logs are the part that did.
 
 The label selector in the ServiceMonitor deliberately avoids `helm.sh/chart`
 and `app.kubernetes.io/version`. Both carry version numbers and would stop

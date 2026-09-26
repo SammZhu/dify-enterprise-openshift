@@ -1,0 +1,5 @@
+apiVersion: v2
+name: logging
+description: Dify's logs in OpenShift's own logging stack - LokiStack on ODF object storage, a least-privilege ClusterLogForwarder, and the console's Logs page
+type: application
+version: 0.1.0

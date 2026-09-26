@@ -58,6 +58,15 @@ prereqs:
     # Saved queries as a console dashboard (Observe -> Dashboards).
     # Lives in openshift-config-managed, not in this namespace, so it needs
     # write access there. Turn off if the installer does not have it.
+    # Alert rules on Dify's telemetry (Observe -> Alerting). Thresholds are
+    # starting points measured on the demo cluster, not recommendations.
+    alerts:
+      enabled: true
+      # Must be one of the histogram's bucket edges: 5, 10, 25, 50, 75, 100 ...
+      slowAnswerSeconds: 25
+      slowAnswerPercent: 25
+      # The demo workspace used ~44k tokens in six busy hours.
+      tokensPerHourPerWorkspace: 100000
     dashboard:
       enabled: true
       name: dashboard-dify-enterprise

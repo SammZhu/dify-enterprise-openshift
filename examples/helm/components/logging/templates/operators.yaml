@@ -1,0 +1,32 @@
+{{- if .Values.logging.installOperators }}
+{{- range $ns, $pkg := dict "openshift-operators-redhat" "loki-operator" .Values.logging.namespace "cluster-logging" }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels: {openshift.io/cluster-monitoring: "true"}
+  annotations: {argocd.argoproj.io/sync-wave: "-3"}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ $ns }}
+  namespace: {{ $ns }}
+  annotations: {argocd.argoproj.io/sync-wave: "-3"}
+spec: {upgradeStrategy: Default}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ $pkg }}
+  namespace: {{ $ns }}
+  annotations: {argocd.argoproj.io/sync-wave: "-2"}
+spec:
+  channel: {{ $.Values.logging.channel }}
+  name: {{ $pkg }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+{{- end }}
+{{- end }}

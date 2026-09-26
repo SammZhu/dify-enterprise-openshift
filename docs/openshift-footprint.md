@@ -25,6 +25,9 @@ Everything else is namespace-scoped. These are the only cluster-level changes:
 | Subscriptions: Tempo, Red Hat build of OpenTelemetry, Cluster Observability | Tracing | `tracing` (**opt-in**) |
 | UIPlugin `distributed-tracing` | Adds Observe → Traces | `tracing` (opt-in) |
 | ClusterRole/Binding `dify-traces-writer` | Lets the collector write tenant `dify` traces, nothing else | `tracing` (opt-in) |
+| Subscriptions: Loki Operator, Red Hat OpenShift Logging | Logs | `logging` (**opt-in**) |
+| ClusterRoleBindings `dify-log-collector-*` | The collector may read **application** logs and write to Loki — not infrastructure, not audit | `logging` (opt-in) |
+| UIPlugin `logging` | Adds Observe → Logs | `logging` (opt-in) |
 | Two OIDC clients in RHBK realm `sso` | SSO for workspace members and for the admin dashboard | `scripts/create-sso-client.sh`, or `prereqs.sso.enabled` (opt-in, costs a cross-namespace grant) |
 
 Not asked for: `privileged`, SCC administration, cluster-admin for the Dify
@@ -44,8 +47,9 @@ team. The Dify namespace's users hold namespace `admin` plus a namespace-scoped
 | Object storage | ODF Multicloud Object Gateway | ObjectBucketClaim `dify-objectstorage` → bucket `dify-dify`, endpoint `http://s3.openshift-storage.svc:80` | namespace | `objectstorage` (default) |
 | Identity | Red Hat build of Keycloak | Realm `sso` — the one the cluster's own OAuth already uses — with clients `dify-enterprise` and `dify-dashboard`, confidential, PKCE S256 enforced | keycloak ns | script / opt-in job |
 | Delivery | OpenShift GitOps | App-of-Apps, 9 Applications, `collaborationMode` (no selfHeal, no prune) | cluster | RHDP Field Sourced Content |
-| Metrics | User workload monitoring | ServiceMonitor on Dify's collector (`:8889`), console dashboard | ns + cluster | `prereqs`, plus the one manual command |
+| Metrics, alerts | User workload monitoring | ServiceMonitor on Dify's collector (`:8889`), console dashboard, four alert rules | ns + cluster | `prereqs`, plus the one manual command |
 | Traces | Tempo, OpenTelemetry, Cluster Observability | `TempoMonolithic` (openshift multitenancy), `OpenTelemetryCollector`, UIPlugin, in namespace `dify-observability` | ns + cluster | `tracing` (opt-in) |
+| Logs | OpenShift Logging, Loki | LokiStack `1x.pico` on an ODF bucket; a ClusterLogForwarder for two namespaces; UIPlugin | ns + cluster | `logging` (opt-in) |
 | Models | — | LiteMaaS (outside the cluster) for chat; in-cluster Ollama embedder for RAG | namespace | `embedder` |
 
 ## How deep the observability goes
@@ -54,8 +58,8 @@ team. The Dify namespace's users hold namespace `admin` plus a namespace-scoped
 |---|---|---|---|---|
 | **Metrics** | Yes | Observe → Dashboards → *Dify Enterprise* (with or without a project selected); Observe → Metrics; `thanos-querier` API | 12 `dify_*` metrics labelled by `tenant_id`, `app_id`, `model_name`, `operation_type` — token accounting per workspace, app and model | Counters restart with the API pod: no series until its first request. Admin only — `user1` cannot list ConfigMaps in `openshift-config-managed`. Query `thanos-querier`, never `prometheus-k8s` (empty, HTTP 200). [monitoring.md](monitoring.md) |
 | **Traces** | Yes (opt-in component; live here) | Observe → Traces, tenant `dify`, TraceQL | Retrieval broken into its steps and SQL; every outbound HTTP call — which surfaced an undocumented call to `tmpl.dify.ai`; one trace spanning API → Celery worker → plugin daemon; every model call with its full generation time | Dify's chart samples 20% by default; **this repo sets 1.0**, and still about one trace in five does not arrive (cause unknown). New traces take minutes to become searchable. A conversation arrives as several unconnected traces. The plugin daemon is visible only with its endpoint patched (re-apply after `helm upgrade`); past the daemon, the call into the plugin pod and the model is not traced. The list is not most-recent-first. [tracing.md](tracing.md) |
-| **Logs** | **No** | Pod logs in the console, one pod at a time | Dify logs structured JSON to stdout | No OpenShift Logging or LokiStack on this cluster. The JSON would forward cleanly — the next integration to add |
-| **Alerts** | **No** | — | — | No `PrometheusRule`. The metrics are there to alert on (latency p95, token rate by tenant); nothing is defined |
+| **Logs** | Yes (opt-in component; live here) | Observe → Logs; LogQL | Dify's JSON logs from both namespaces in a LokiStack on ODF object storage; `trace_id` in every line links a log to its trace and back | Dify's JSON is nested inside the platform's envelope — query with `\| json \| line_format "{{.message}}" \| json`. A brief `429` burst at collector start-up is expected. [logging.md](logging.md) |
+| **Alerts** | Yes | Observe → Alerting | Four rules: scrape failing, scrape target missing, slow answers (>25% over 25 s), workspace token burn | Delivery proven with a temporary rule; none of the four has fired for real. The latency histogram's buckets are sized for milliseconds, so the slow-answer rule uses a bucket edge, not a quantile. [monitoring.md](monitoring.md#alerts) |
 | **Audit** | Dify's own | Dify admin console → 审计日志 | Dify's `audit` database | Not forwarded to the platform |
 
 ## Live on this cluster, but not from Git
@@ -65,6 +69,7 @@ Where the running environment and the repository differ, and why:
 | Object | State | Why | Rebuild / action |
 |---|---|---|---|
 | `cluster-monitoring-config` | Created by hand | Cluster-owned; deliberately not in an app chart | `oc -n openshift-monitoring create configmap cluster-monitoring-config --from-literal=config.yaml='enableUserWorkload: true'` |
+| Logging stack (2 operators, LokiStack, forwarder, UIPlugin, RBAC, bucket) | Applied by hand | Built interactively; `components/logging` was written from it | Rendered and compared with `oc diff`: 13 of 13 existing objects identical apart from ArgoCD annotations; the secret-composing Job run live produced a byte-identical Secret. Set `components.logging.enabled: true` to have GitOps adopt it |
 | Tracing stack (3 operators, Tempo, collector, UIPlugin, RBAC) | Applied by hand | Built interactively; `components/tracing` was written from it | `components/tracing` reproduces it — rendered and compared with `oc diff`, identical apart from ArgoCD annotations. Set `components.tracing.enabled: true` to have GitOps adopt it |
 | RHBK clients and `dify-sso-*` Secrets | Script | Secrets must not be in Git; the client lives in another namespace | `scripts/create-sso-client.sh workspace` / `dashboard` |
 | `image-repo-secret` | Script | Holds a registry token | `scripts/create-image-repo-secret.sh` |
@@ -72,6 +77,7 @@ Where the running environment and the repository differ, and why:
 | StatefulSet `dify-minio` (0 replicas) + PVC `data-dify-minio-0` | Orphaned | Its ArgoCD Application was removed; the object still carries the old tracking annotation | Kept as a rollback copy until the environment is destroyed |
 | `plugin-daemon-config` OTLP endpoints (`:4318`) | Patched by hand | The chart sends the daemon's telemetry to the gRPC port and every export fails; not a chart value | `helm upgrade` reverts it — run `scripts/fix-plugin-daemon-otlp.sh` after each upgrade |
 | `OTEL_SAMPLING_RATE=1.0` in five ConfigMaps | Patched by hand | Chart default is 0.2 | Also in `dify-values` (`components.dify.otel.samplingRate`); a re-rendered upgrade keeps it |
+| Redis list `trigger_refresh_publisher` (~1 message/min, 3.0 MB on 09-26) | Growing | Upstream: a beat task on a queue no worker consumes | Deliberately left; see handover.md item 13 |
 | RoleBinding `dify-dify-enterprise-sandbox-privileged` | From Dify's chart | Its SCC templates bind `privileged` to the sandbox | Unused — the sandbox runs under `dify-sandbox` — but a silent fallback if the sandbox ever asks for more. Ask Dify to disable their SCC templates |
 | Service `plugin-daemon-debug-svc`, NodePort 32489 | From Dify's chart | A debug port on every node | Raise with Dify |
 

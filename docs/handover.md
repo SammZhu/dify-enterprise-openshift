@@ -104,6 +104,15 @@ oc get secret dify-sso-client -n dify -o jsonpath='{.data.clientSecret}' | base6
 pbpaste | wc -c     # must print 32
 ```
 
+## Seeing Dify from the OpenShift console
+
+| | Where | Notes |
+|---|---|---|
+| Metrics | Observe → Dashboards → *Dify Enterprise* | Admin only: needs read on `openshift-config-managed` |
+| Alerts | Observe → Alerting | Four rules; see [monitoring.md](monitoring.md#alerts) |
+| Traces | Observe → Traces, tenant `dify` | How to show model latency: [tracing.md](tracing.md#demo-how-long-did-the-model-take) |
+| Logs | Observe → Logs | Every line carries `trace_id`; paste one into `{kubernetes_namespace_name="dify"} \|= "<id>"` to see what one request did across containers. [logging.md](logging.md) |
+
 ## For you to follow up on the Dify side
 
 Found while running your chart on OpenShift. None of it blocks the demo; all of
@@ -173,6 +182,14 @@ it matters for a customer deployment.
     queues. Related: the entrypoint's defaults include `dataset_summary`, which
     the chart's worker does not consume either — summary indexing tasks would
     pile up the same way (none queued here yet).
+
+    **Decision, 2026-09-26: left as is on this cluster.** 3 MB, no functional
+    effect with zero trigger subscriptions, the environment ends on 2026-09-30,
+    and a fix would mean patching another chart-managed ConfigMap that the next
+    `helm upgrade` reverts. The two ways to fix it, for whoever does: add
+    `trigger_refresh_publisher` to the trigger worker's queues (the backlog then
+    drains harmlessly — each task scans an empty table), or set
+    `ENABLE_TRIGGER_PROVIDER_REFRESH_TASK=false` and delete the list.
 
 **Documentation and images**
 

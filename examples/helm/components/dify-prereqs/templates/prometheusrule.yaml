@@ -1,0 +1,76 @@
+{{- if and .Values.prereqs.enabled .Values.prereqs.monitoring.enabled .Values.prereqs.monitoring.alerts.enabled }}
+{{- $a := .Values.prereqs.monitoring.alerts }}
+{{- /* The `le` label is rendered as a float string - "25.0", never "25". A
+       selector on le="25" matches nothing and the alert can never fire, with
+       no error anywhere. Format it here rather than trusting the value. */}}
+{{- $le := printf "%.1f" (float64 $a.slowAnswerSeconds) }}
+{{- $svc := printf "%s-dify-enterprise-enterprise-collector-svc" .Values.prereqs.monitoring.releaseName }}
+---
+# =============================================================================
+# Alerts on Dify's own telemetry, evaluated by OpenShift's user-workload
+# monitoring and delivered to the platform Alertmanager. They appear under
+# Observe -> Alerting. Inert without user workload monitoring.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: dify-alerts
+  namespace: {{ .Values.prereqs.namespace }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+spec:
+  groups:
+    - name: dify.telemetry
+      rules:
+        # The collector is scraped by both user-workload Prometheus replicas,
+        # so there are two `up` series; max() means "no replica can reach it".
+        - alert: DifyTelemetryScrapeFailing
+          expr: max(up{namespace="{{ .Values.prereqs.namespace }}", service="{{ $svc }}"}) == 0
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: Dify's telemetry collector cannot be scraped
+            description: Every dashboard panel and every dify_* metric stops updating while this fires.
+        # The failure mode that raises no error at all: after a chart upgrade the
+        # ServiceMonitor's selector stops matching, the target disappears, and
+        # `up` does not go to 0 - it goes away.
+        - alert: DifyTelemetryTargetMissing
+          expr: absent(up{namespace="{{ .Values.prereqs.namespace }}", service="{{ $svc }}"})
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: No scrape target for Dify's telemetry collector
+            description: The ServiceMonitor matches nothing. Check its selector against the collector Service's labels - a chart upgrade may have renamed them.
+    - name: dify.experience
+      rules:
+        # Deliberately not a histogram_quantile(). The histogram uses
+        # OpenTelemetry's default buckets, sized for milliseconds
+        # (0,5,10,25,50,...) on a metric in seconds, so any quantile between 10
+        # and 25 s is an interpolation. A bucket edge is exact: this is the
+        # share of answers that took longer than {{ $a.slowAnswerSeconds }} s.
+        # The threshold is divided in PromQL, not in the template - Helm's mul
+        # truncates 0.25 to 0.
+        - alert: DifySlowAnswers
+          expr: |
+            (
+              1 - sum(rate(dify_message_duration_seconds_bucket{le="{{ $le }}"}[15m]))
+                / sum(rate(dify_message_duration_seconds_count[15m]))
+            ) > {{ $a.slowAnswerPercent }} / 100
+            and sum(rate(dify_message_duration_seconds_count[15m])) > 0
+          for: 5m
+          labels: {severity: warning}
+          annotations:
+            summary: "More than {{ $a.slowAnswerPercent }}% of answers took longer than {{ $a.slowAnswerSeconds }} s"
+            description: Open Observe -> Traces with { name =~ ".*dispatch/llm/invoke" } to see whether the time is in the model or in retrieval.
+    - name: dify.cost
+      rules:
+        # Showback, not enforcement: a workspace burning tokens faster than
+        # expected. increase() undercounts the first request after an API
+        # restart; for a budget alert that errs on the quiet side.
+        - alert: DifyWorkspaceTokenBurn
+          expr: sum by (tenant_id) (increase(dify_tokens_total[1h])) > {{ $a.tokensPerHourPerWorkspace | int }}
+          labels: {severity: info}
+          annotations:
+            summary: "Workspace {{`{{ $labels.tenant_id }}`}} used more than {{ $a.tokensPerHourPerWorkspace | int }} tokens in an hour"
+            description: The Dify Enterprise dashboard's "Tokens by workspace" panel shows which models it went to.
+{{- end }}

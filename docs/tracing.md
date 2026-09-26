@@ -262,6 +262,16 @@ first misread here.
 
 The Traces list is **not "most recent first"**. Tempo's search returns the
 first N traces it finds (20 by default), and the page then sorts those by time.
+When a query matches more than that, the page says so:
+
+> *Not all matching traces are currently visible. Increase the display limit to
+> view more.*
+
+Raising the limit shows more, but still "the first found", so the newest can
+still be missing. What works, in order: **shorten the time range** until the
+match count is below the limit, and **make the query specific** — a broad
+`{ resource.service.name = "langgenius/dify" }` matches every Redis `PUBLISH`
+and health check.
 With the noise above, a fresh conversation is easily absent from the list. Use
 *Show query* and TraceQL — each of these was run against this Tempo:
 

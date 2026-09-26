@@ -93,6 +93,20 @@ components:
     collector:
       name: dify-otel
 
+  # --- Logging (optional) ----------------------------------------------------
+  # LokiStack on ODF object storage + a forwarder that may read only application
+  # logs of the namespaces below. Installs two cluster-level operators.
+  logging:
+    enabled: false
+    namespace: openshift-logging
+    installOperators: true
+    channel: stable-6.6
+    size: 1x.pico
+    storageClassName: ocs-external-storagecluster-ceph-rbd
+    bucketName: loki-dify-logs
+    namespaces: [dify, dify-observability]
+    cliImage: quay.io/openshift/origin-cli:latest
+
   # --- Plugin CRD ----------------------------------------------------------
   # The DifyPlugin CRD. Not part of the certified image set - it ships as a
   # separate chart - but it is only an API schema, so it can be version

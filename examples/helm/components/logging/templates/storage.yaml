@@ -1,0 +1,84 @@
+{{- $ns := .Values.logging.namespace }}
+---
+# Loki's object storage comes from ODF's gateway, like Dify's own.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: loki-bucket
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  storageClassName: openshift-storage.noobaa.io
+  bucketName: {{ .Values.logging.bucketName }}
+---
+# LokiStack wants its S3 credentials in its own key names. The claim's Secret
+# has them under other names, so this job re-shapes them on the cluster - the
+# credential never passes through Git.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: loki-secret-writer
+  namespace: {{ $ns }}
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: loki-secret-writer
+  namespace: {{ $ns }}
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}
+rules:
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [get, create, patch, update]
+  - apiGroups: [objectbucket.io]
+    resources: [objectbucketclaims]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: loki-secret-writer
+  namespace: {{ $ns }}
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: loki-secret-writer}
+subjects: [{kind: ServiceAccount, name: loki-secret-writer, namespace: {{ $ns }}}]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: loki-s3-secret
+  namespace: {{ $ns }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: loki-secret-writer
+      restartPolicy: OnFailure
+      containers:
+        - name: write
+          image: {{ .Values.logging.cliImage }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              NS={{ $ns }}
+              for i in $(seq 1 60); do
+                [ "$(oc get objectbucketclaim loki-bucket -n $NS -o jsonpath='{.status.phase}')" = Bound ] && break
+                echo "waiting for the bucket claim to bind ($i)"; sleep 5
+              done
+              get() { oc get secret loki-bucket -n $NS -o jsonpath="{.data.$1}" | base64 -d; }
+              oc create secret generic logging-loki-s3 -n $NS \
+                --from-literal=bucketnames="$(oc get configmap loki-bucket -n $NS -o jsonpath='{.data.BUCKET_NAME}')" \
+                --from-literal=endpoint="http://s3.openshift-storage.svc:80" \
+                --from-literal=region="us-east-1" \
+                --from-literal=access_key_id="$(get AWS_ACCESS_KEY_ID)" \
+                --from-literal=access_key_secret="$(get AWS_SECRET_ACCESS_KEY)" \
+                --dry-run=client -o yaml | oc apply -f -
+              echo "logging-loki-s3 written; no credential printed"

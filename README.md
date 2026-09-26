@@ -19,6 +19,9 @@ two things that cost real time: **[docs/sso-rhbk.md](docs/sso-rhbk.md)**. Dify's
 own telemetry scraped by the platform's Prometheus, no new operator required:
 **[docs/monitoring.md](docs/monitoring.md)**. Traces in OpenShift's own tracing
 stack, and what they do and do not show: **[docs/tracing.md](docs/tracing.md)**.
+Logs in OpenShift's logging stack, linked to traces by `trace_id`:
+**[docs/logging.md](docs/logging.md)**. Alert rules:
+**[docs/monitoring.md#alerts](docs/monitoring.md#alerts)**.
 
 **Demonstrating it:** where a conversation's time goes — the model call, the
 retrieval, the vector search — step by step in the OpenShift console:
