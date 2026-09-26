@@ -55,7 +55,10 @@ the chart's generated Secrets and ConfigMaps, so everything works now — but
    private key.
 
 3. **Trace sampling raised from 0.2 to 1.0** (`global.otel.samplingRate`), so
-   every conversation can be found in the console's Traces page. Applied to the
+   most conversations can now be found in the console's Traces page. Not all:
+   about one trace in five still does not arrive, cause unknown, and a new
+   trace takes a few minutes to show up in search (by trace ID it is there at
+   once) — see [tracing.md](tracing.md). Applied to the
    five ConfigMaps that carry `OTEL_SAMPLING_RATE`; the rendered values carry it
    too.
 

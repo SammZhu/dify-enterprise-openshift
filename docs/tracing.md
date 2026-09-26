@@ -72,6 +72,19 @@ page. When the real traffic arrived, the only unknown left was Dify itself.
 
 ## What the traces show
 
+**A cold start, measured.** The same question, asked after an API restart and
+again a few minutes later:
+
+| | retrieval | plugin daemon | Qdrant | not covered by any span |
+|---|---|---|---|---|
+| first after restart | 2493 ms | 694 ms | 77 ms | **≈1770 ms** |
+| same question, warm | 199 ms | 17 ms | 123 ms | 72 ms |
+
+Qdrant is never the slow part. The ~1.8 s nobody instrumented disappears once
+the process is warm; the plugin daemon's drop to 17 ms is consistent with Dify
+caching the query's embedding, which was not checked separately. For a demo:
+ask one warm-up question after the cluster starts.
+
 After two chat messages to the RAG assistant:
 
 - **`RetrievalService.retrieve`: 93 spans, 276 ms** — the nested retrieval
@@ -105,12 +118,17 @@ Worth stating plainly in front of a customer:
 
    - The first knowledge-base question afterwards produced its retrieval trace
      (`RetrievalService.retrieve`, 93 spans), where the two before it had not.
-   - `GET /health` traces — kubelet probes, a request that arrives whether or
-     not anyone is using Dify — went from **3.0 to 9.8 per minute (3.3×)**.
-     Three different query forms gave the same counts, and neither collector
-     logged a drop. That is clearly more than before, but **not the 5× a strict
-     one-in-five sampler predicts**, and the gap is not explained. Treat the
-     sampling rate as "much higher", not as proven to be exactly 100%.
+   - `GET /health` traces — kubelet probes, twelve a minute whether or not
+     anyone is using Dify — went from **2.7 to 9.3 per minute (3.5×)**, counted
+     in windows old enough to be fully searchable. Before the change that is
+     close to one in five of twelve; after it, about **four in five** — not all.
+
+   **Roughly one trace in five still does not reach Tempo**, and the cause is
+   not found. The evidence: the probe counts above, and one trace ID taken from
+   the API's own log (the log carries `trace_id`) that Tempo answered 404 for
+   while the other traces of the same request were there. Not Tempo rate
+   limiting (nothing discarded in its log), not either collector (no errors,
+   `errorCount: 0`), not the search (checked by ID).
 
    Lower it where the overhead matters. Metrics are not sampled — they are
    counters.
@@ -138,6 +156,14 @@ Worth stating plainly in front of a customer:
    `unknown_service:enterprise`.
 
 ## Finding the useful traces
+
+**New traces take a few minutes to become searchable.** A retrieval at 12:00:00
+was absent from TraceQL search at 12:02:24 and present at 12:04:13; one at
+11:52 appeared after about a minute and a half. Fetching by trace ID works
+immediately — and the ID is in the API's log line for the request
+(`oc logs deploy/<release>-dify-enterprise-api | grep trace_id`). Without
+knowing this, a missing search result reads as a lost trace; that is how it was
+first misread here.
 
 The Traces list is **not "most recent first"**. Tempo's search returns the
 first N traces it finds (20 by default), and the page then sorts those by time.
