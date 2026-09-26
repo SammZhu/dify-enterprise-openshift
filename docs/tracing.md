@@ -145,7 +145,8 @@ Dify services ──> Dify's collector ──(数据推送, OTLP/HTTP)──> di
                                                               platform-owned                                 openshift multitenancy
 ```
 
-`components/tracing` installs, off by default:
+`components/tracing` installs, on by default (`components.tracing.enabled`;
+turn it off on a cluster that already runs its own tracing stack):
 
 | | |
 |---|---|

@@ -75,13 +75,15 @@ components:
       enabled: true
       apiGroup: enterprise.dify.ai
 
-  # --- Distributed tracing (optional) --------------------------------------
+  # --- Distributed tracing ------------------------------------------------
   # Tempo + a platform-owned OpenTelemetry collector + the console's Traces
-  # page. Installs three cluster-level operators, so it is off by default.
+  # page. On by default: it is part of what this deployment demonstrates.
+  # It installs three cluster-level operators - set enabled: false on a
+  # cluster that already runs its own tracing stack.
   # Point Dify's 数据推送 at:
   #   http://dify-otel-collector.<namespace>.svc.cluster.local:4318
   tracing:
-    enabled: false
+    enabled: true
     namespace: dify-observability
     installOperators: true
     tempo:
@@ -93,11 +95,14 @@ components:
     collector:
       name: dify-otel
 
-  # --- Logging (optional) ----------------------------------------------------
+  # --- Logging ----------------------------------------------------------------
   # LokiStack on ODF object storage + a forwarder that may read only application
-  # logs of the namespaces below. Installs two cluster-level operators.
+  # logs of the namespaces below. On by default, like tracing. It installs two
+  # cluster-level operators - set enabled: false on a cluster that already
+  # runs OpenShift Logging. Its console page (Observe -> Logs) needs the
+  # Cluster Observability Operator, which the tracing component installs.
   logging:
-    enabled: false
+    enabled: true
     namespace: openshift-logging
     installOperators: true
     channel: stable-6.6

@@ -10,8 +10,9 @@ Operator 6.6.1.
 
 ## What is installed
 
-`components/logging`, off by default because it installs two cluster-level
-operators:
+`components/logging`, on by default (`components.logging.enabled`). It installs
+two cluster-level operators, so turn it off on a cluster that already runs
+OpenShift Logging:
 
 | | |
 |---|---|
