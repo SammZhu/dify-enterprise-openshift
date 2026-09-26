@@ -4,6 +4,9 @@ charts/
 # Output of scripts/render-dify-values.sh - contains resolved live credentials.
 dify-values.yaml
 dify-values.local.yaml
+# Anchored to the root and wildcarded: `dify-values.yaml` alone did not cover
+# `dify-values.yaml_init`, which reached this public repo with live credentials.
+/dify-values*
 kubeconfig*
 
 # Raw capture output is ignored ON PURPOSE.
