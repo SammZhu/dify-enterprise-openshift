@@ -23,9 +23,11 @@ Logs in OpenShift's logging stack, linked to traces by `trace_id`:
 **[docs/logging.md](docs/logging.md)**. Alert rules:
 **[docs/monitoring.md#alerts](docs/monitoring.md#alerts)**.
 
-**Demonstrating it:** where a conversation's time goes — the model call, the
-retrieval, the vector search — step by step in the OpenShift console:
-**[docs/tracing.md#demo-how-long-did-the-model-take](docs/tracing.md#demo-how-long-did-the-model-take)**.
+**Demonstrating it:** a 20-minute demo script (in Chinese) — SSO, a
+knowledge-base question, then where its time went, what it cost and what it
+logged, all in the OpenShift console, with a pre-demo checklist and what to say
+when asked: **[docs/demo-script.md](docs/demo-script.md)**. The model-latency
+part in detail: [docs/tracing.md](docs/tracing.md#demo-how-long-did-the-model-take).
 
 **Everything this puts on OpenShift** — every component, setting and object, what
 a cluster administrator is asked to approve, which parts arrive from GitOps and
