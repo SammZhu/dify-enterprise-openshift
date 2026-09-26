@@ -1,0 +1,20 @@
+tracing:
+  # A separate namespace on purpose. The Dify namespace binds anyuid to every
+  # ServiceAccount in it (the chart creates release-derived SAs), and anyuid
+  # hands out no fsGroup - Tempo placed there crash-looped on
+  # `mkdir /var/tempo/blocks: permission denied`, the same failure PostgreSQL
+  # had on day one. Here the platform default, restricted-v2, applies.
+  namespace: dify-observability
+  # Cluster-level: three operators from redhat-operators. Leave false if they
+  # are already installed, or if the installer may not create Subscriptions.
+  installOperators: true
+  tempo:
+    name: dify-traces
+    size: 10Gi
+    memoryLimit: 2Gi
+    # openshift multitenancy is the supported configuration. Without it the
+    # operator warns that the instance "is not supported on OpenShift".
+    tenantName: dify
+    tenantId: 4f1f0f5a-9c1e-4c55-9d7a-3b6f2a8e1d01
+  collector:
+    name: dify-otel

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: tracing
+description: Dify traces into OpenShift's own tracing stack - Tempo, a platform-owned OpenTelemetry collector, and the console's Traces page
+type: application
+version: 0.1.0

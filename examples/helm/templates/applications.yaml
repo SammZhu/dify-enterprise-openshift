@@ -5,6 +5,7 @@
 #   0  prereqs    - SCC bindings / ServiceAccount / RBAC must exist first
 #   1  data tier  - PostgreSQL, Redis, Qdrant, MinIO
 #   2  dify       - Dify Enterprise itself
+#   3  tracing    - optional: Tempo + a platform-owned OTel collector
 # =============================================================================
 
 {{- $common := dict "repoURL" .Values.gitops.repoUrl "revision" .Values.gitops.revision "base" .Values.gitops.basePath "argons" .Values.argocd.namespace "project" .Values.argocd.project "ns" .Values.namespace }}
@@ -343,4 +344,49 @@ spec:
       selfHeal: {{ not $.Values.collaborationMode }}
     syncOptions:
       - CreateNamespace=true
+{{- end }}
+
+{{- if .Values.components.tracing.enabled }}
+---
+# Traces into OpenShift's own tracing stack. Off by default: it installs three
+# cluster-level operators. Everything lands in its own namespace, not the Dify
+# one - see components/tracing/values.yaml for why that is not optional.
+#
+# Dify's side (the "数据推送" endpoint) is stored in Dify's database, not in a
+# Kubernetes object, so it is entered once in the admin console. docs/tracing.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ .Release.Name }}-tracing
+  namespace: {{ $common.argons }}
+  labels:
+    demo.redhat.com/application: "dify-enterprise"
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ $common.project }}
+  source:
+    repoURL: {{ $common.repoURL }}
+    targetRevision: {{ $common.revision }}
+    path: {{ $common.base }}/components/tracing
+    helm:
+      valuesObject:
+        tracing:
+{{ toYaml .Values.components.tracing | indent 10 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.components.tracing.namespace }}
+  syncPolicy:
+    automated:
+      prune: {{ not $.Values.collaborationMode }}
+      selfHeal: {{ not $.Values.collaborationMode }}
+    syncOptions:
+      - CreateNamespace=true
+    # The first sync creates Subscriptions whose CRDs arrive minutes later;
+    # the Tempo, collector and UIPlugin objects succeed on a retry.
+    retry:
+      limit: 10
+      backoff: {duration: 30s, factor: 2, maxDuration: 5m}
 {{- end }}

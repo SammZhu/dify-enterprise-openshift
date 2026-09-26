@@ -209,10 +209,8 @@ curl -sk -H "Authorization: Bearer $(oc whoami -t)" \
 
 ## What is still missing
 
-Traces. 4317/4318 are standard OTLP, but nothing is receiving them — the
-Cluster Observability, Tempo and OpenTelemetry operators are not installed on
-this cluster. Metrics were the part that needed no new operator; traces are the
-part that does.
+Nothing, as of 2026-09-26 — traces are in [tracing.md](tracing.md). Metrics
+were the part that needed no new operator; traces are the part that did.
 
 The label selector in the ServiceMonitor deliberately avoids `helm.sh/chart`
 and `app.kubernetes.io/version`. Both carry version numbers and would stop

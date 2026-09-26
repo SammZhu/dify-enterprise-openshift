@@ -627,6 +627,38 @@ not there" from "I could not look."** Concretely — prove reachability before
 trusting a baseline, make every collector signal failure rather than return
 empty, and discard a partial sample instead of diffing it.
 
+## The namespace-wide anyuid binding catches everything placed after it
+
+`anyuid` is bound to the group `system:serviceaccounts:dify`, because the Dify
+chart creates ServiceAccounts whose names derive from the release and cannot be
+listed in advance. The side effect is that **any** workload later placed in the
+namespace is admitted under `anyuid` rather than `restricted-v2` — and `anyuid`
+assigns no fsGroup, so its volumes are not writable.
+
+Tempo was the second thing to hit this, after PostgreSQL on day one:
+
+```
+mkdir /var/tempo/blocks: permission denied        SCC=anyuid  fsGroup=<none>
+```
+
+The fix was not an fsGroup on Tempo but a different namespace: in
+`dify-observability` the platform default applies and nothing needs
+configuring. The rule it suggests: keep the Dify namespace for Dify, and put
+platform components beside it rather than in it.
+
+## The vendor chart writes the Redis password into a ConfigMap
+
+The collector's ConfigMap (`<release>-dify-enterprise-enterprise-collector-config`)
+carries `REDIS_DSN` in the form `redis://:<password>@host:6379/0` — the
+password in plaintext, in an object that etcd stores unencrypted and that far
+more people can read than can read Secrets. This repository resolves
+credentials from Secrets only at install time (`render-dify-values.sh`); the
+chart then assembles the DSN and writes it into a ConfigMap itself.
+
+It is outside this repository's control and worth raising with Dify. It also
+surfaced in a debugging session here: a masking rule written for
+`password: <value>` did not catch the credential embedded in a URL.
+
 ## Confirmed working
 
 - `anyuid` is sufficient for the dependency tier. Whether Dify's own sandbox and

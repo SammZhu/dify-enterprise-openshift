@@ -1,0 +1,81 @@
+{{- $gw := printf "tempo-%s-gateway.%s.svc.cluster.local:4317" .Values.tracing.tempo.name .Values.tracing.namespace }}
+{{- $sa := printf "%s-collector" .Values.tracing.collector.name }}
+---
+# With openshift multitenancy, Tempo expresses a tenant as a resource in the
+# tempo.grafana.com group. Writing traces = `create` on <tenant>/traces, and
+# this grants exactly that, to exactly the collector.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.tracing.tempo.tenantName }}-traces-writer
+  labels:
+    demo.redhat.com/application: dify-enterprise
+rules:
+  - apiGroups: [tempo.grafana.com]
+    resources: [{{ .Values.tracing.tempo.tenantName }}]
+    resourceNames: [traces]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.tracing.tempo.tenantName }}-traces-writer
+  labels:
+    demo.redhat.com/application: dify-enterprise
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.tracing.tempo.tenantName }}-traces-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Values.tracing.namespace }}
+---
+# The platform-owned collector is the endpoint Dify's "数据推送" page points
+# at. It is a separate hop on purpose: Tempo accepts only traces, and Dify's
+# unified mode pushes metrics too - sent straight to Tempo they are refused and
+# pile up in Dify's "未推送积压数据量". It is also where the platform, not the
+# application team, decides what to keep, drop or sample.
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Values.tracing.collector.name }}
+  namespace: {{ .Values.tracing.namespace }}
+  labels:
+    demo.redhat.com/application: dify-enterprise
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  mode: deployment
+  replicas: 1
+  config:
+    extensions:
+      bearertokenauth:
+        filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+    receivers:
+      otlp:
+        protocols:
+          grpc: {endpoint: 0.0.0.0:4317}
+          http: {endpoint: 0.0.0.0:4318}
+    processors:
+      memory_limiter: {check_interval: 1s, limit_percentage: 75, spike_limit_percentage: 15}
+      batch: {}
+    exporters:
+      otlp/tempo:
+        endpoint: {{ $gw }}
+        tls:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt
+        auth: {authenticator: bearertokenauth}
+        headers: {X-Scope-OrgID: {{ .Values.tracing.tempo.tenantName }}}
+      # Dify's own collector is already scraped on 8889 (dify-prereqs
+      # servicemonitor.yaml). Metrics arriving here are accepted so the
+      # sender's backlog does not grow, and exposed but not scraped, so nothing
+      # is counted twice.
+      prometheus:
+        endpoint: 0.0.0.0:8889
+    service:
+      extensions: [bearertokenauth]
+      pipelines:
+        traces:  {receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/tempo]}
+        metrics: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [prometheus]}

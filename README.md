@@ -17,7 +17,8 @@ enterprise features meet the platform's:
 SSO to Red Hat build of Keycloak, including the two surfaces it exposes and the
 two things that cost real time: **[docs/sso-rhbk.md](docs/sso-rhbk.md)**. Dify's
 own telemetry scraped by the platform's Prometheus, no new operator required:
-**[docs/monitoring.md](docs/monitoring.md)**.
+**[docs/monitoring.md](docs/monitoring.md)**. Traces in OpenShift's own tracing
+stack, and what they do and do not show: **[docs/tracing.md](docs/tracing.md)**.
 
 ## What this is
 

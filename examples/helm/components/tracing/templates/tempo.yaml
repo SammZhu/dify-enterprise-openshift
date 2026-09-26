@@ -1,0 +1,39 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.tracing.namespace }}
+  labels:
+    demo.redhat.com/application: dify-enterprise
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+---
+# The CRD arrives with the operator, so the first sync cannot dry-run this.
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoMonolithic
+metadata:
+  name: {{ .Values.tracing.tempo.name }}
+  namespace: {{ .Values.tracing.namespace }}
+  labels:
+    demo.redhat.com/application: dify-enterprise
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  storage:
+    traces:
+      backend: pv
+      size: {{ .Values.tracing.tempo.size }}
+  ingestion:
+    otlp:
+      grpc: {enabled: true}
+      http: {enabled: true}
+  multitenancy:
+    enabled: true
+    mode: openshift
+    authentication:
+      - tenantName: {{ .Values.tracing.tempo.tenantName }}
+        tenantId: {{ .Values.tracing.tempo.tenantId }}
+  resources:
+    limits:
+      memory: {{ .Values.tracing.tempo.memoryLimit }}

@@ -100,8 +100,10 @@ a ServiceMonitor on port 8889, target `up`, and roughly 1800 series flowing
 into the platform's own Prometheus, labelled by tenant, application and model.
 See **[docs/monitoring.md](monitoring.md)**. No new operator was needed.
 
-Traces still are not: the Cluster Observability, Tempo and OpenTelemetry
-operators are not installed on this cluster.
+**Traces are wired up as of 2026-09-26** — Dify's *数据推送* pointed at a
+platform-owned OpenTelemetry collector, stored in Tempo, visible under
+Observe → Traces. See **[docs/tracing.md](tracing.md)**, including what the
+traces do not show.
 
 ## 4. Two identity planes, not one
 
