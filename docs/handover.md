@@ -160,6 +160,14 @@ it matters for a customer deployment.
    installation. Either citations are not being stored, or they are stored
    somewhere else — worth confirming.
 
+14. **Conversation-title generation is invisible to token accounting.** After
+    the first answer in a new conversation, Dify calls the model again to name
+    it (`POST …/conversations/<id>/name`, 2.9 s in the rehearsal). That call is
+    counted in `dify_requests_total` as `type="generate_name"` — without an
+    `app_id` — but its tokens never reach `dify_tokens_total`, which recorded
+    exactly the answer's 4305 and nothing more. Chargeback built on these
+    metrics undercounts every new conversation.
+
 **Data lifecycle**
 
 12. **Deleting a document or a knowledge base triggered no cleanup.** A
