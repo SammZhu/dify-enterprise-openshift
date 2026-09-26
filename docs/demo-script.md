@@ -77,7 +77,7 @@ Dify
 
 **讲**:模型、耗时、token 在一张图里。token 数和 Dify 自己账上的**逐位一致**(彩排两次都一致)。这些数据发到的是**平台自己的 Tempo**——Dify 本来是要接 Langfuse、Phoenix 这类第三方平台的,我们把它指向了 OpenShift。
 
-> 这几行的服务名显示为 **`unknown`**,是正常的:Dify 的 Phoenix 导出器不设服务名,项目名在 `openinference.project.name = dify-demo` 里。耗时比 Dify 记录的略短约 0.2 秒(12.43 vs 12.61 秒),两次彩排都是这样。
+> 这几行的服务名显示为 **`dify-demo`**。Dify 的 Phoenix 导出器本身不设服务名(原来显示 `unknown`),是**平台的 collector 用项目名补上的**——「平台团队自己决定数据的样子,不用改应用」,可以顺势讲。耗时比 Dify 记录的略短约 0.2 秒(12.43 vs 12.61 秒),两次彩排都是这样。
 
 **B. 从基础设施看同一次调用——以及一个看不见的调用**
 
@@ -133,12 +133,13 @@ retrieve                                  260.7 ms
 
 **讲**:
 - **Tokens by model — cumulative**:台阶正好是 **4305**(29466 → 33771),和 Dify 的账**完全一致**
+- **Answers by application**:回答次数,和 Dify 的消息记录逐条一致
 - 每个指标都带 `tenant_id` / `app_id` / `model_name` 标签——**按租户计费(chargeback)的原料**
 - 用的是 OpenShift 自带的 Prometheus,**没装任何新 operator**
 
 > 读面板时注意两点:
 > - **per 5 min 面板会显示约 4.8k**,比实际的 4305 多——`increase()` 会向窗口两端外推。要精确数字看 cumulative。
-> - **Requests by application 有两条线**:绿线是这个应用的「回答 + 检索」,**一次对话算 2 个**;蓝线图例空白,是**起标题**(它不带 `app_id`)。它统计的不是对话次数。
+> - **Answers by application** 只统计回答(`type="message"`),等于对话里的回答次数——和 Dify 的消息记录逐条一致(6 = 6)。原始指标还把检索和起标题各算一次,所以面板做了过滤。
 
 **操作**:**Observe → Alerting** → **警报规则** 标签 → 名称筛选 **Dify**。
 

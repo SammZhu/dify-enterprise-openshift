@@ -61,6 +61,15 @@ spec:
     processors:
       memory_limiter: {check_interval: 1s, limit_percentage: 75, spike_limit_percentage: 15}
       batch: {}
+      # Dify's Phoenix integration (per-app LLM tracing) exports OpenInference
+      # spans with no service.name, so the console lists them as "unknown".
+      # `insert` writes only when the key is absent: spans that already carry a
+      # service name - Dify's own, the plugin daemon's - are left untouched.
+      resource/name-llm-traces:
+        attributes:
+          - key: service.name
+            from_attribute: openinference.project.name
+            action: insert
     exporters:
       otlp/tempo:
         endpoint: {{ $gw }}
@@ -77,5 +86,5 @@ spec:
     service:
       extensions: [bearertokenauth]
       pipelines:
-        traces:  {receivers: [otlp], processors: [memory_limiter, batch], exporters: [otlp/tempo]}
+        traces:  {receivers: [otlp], processors: [memory_limiter, resource/name-llm-traces, batch], exporters: [otlp/tempo]}
         metrics: {receivers: [otlp], processors: [memory_limiter, batch], exporters: [prometheus]}

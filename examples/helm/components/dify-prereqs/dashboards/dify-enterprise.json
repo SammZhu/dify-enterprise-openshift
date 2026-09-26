@@ -121,7 +121,7 @@
     },
     {
       "type": "graph",
-      "title": "Requests by application \u2014 cumulative since last restart",
+      "title": "Answers by application \u2014 cumulative since last restart",
       "id": 202,
       "datasource": "$datasource",
       "gridPos": {
@@ -187,7 +187,7 @@
       ],
       "targets": [
         {
-          "expr": "sum by (app_id) (dify_requests_total)",
+          "expr": "sum by (app_id) (dify_requests_total{type=\"message\"})",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "{{app_id}}",
@@ -444,7 +444,7 @@
     },
     {
       "type": "graph",
-      "title": "Requests by application",
+      "title": "Answers by application \u2014 per second",
       "id": 4,
       "datasource": "$datasource",
       "gridPos": {
@@ -510,7 +510,7 @@
       ],
       "targets": [
         {
-          "expr": "sum by (app_id) (rate(dify_requests_total[5m]))",
+          "expr": "sum by (app_id) (rate(dify_requests_total{type=\"message\"}[5m]))",
           "format": "time_series",
           "intervalFactor": 1,
           "legendFormat": "{{app_id}}",

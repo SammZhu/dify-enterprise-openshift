@@ -101,10 +101,21 @@ renders them under **Observe → Dashboards** — no Grafana, no new operator.
 
 `components/dify-prereqs/dashboards/dify-enterprise.json` ships ten panels. The
 first four are cumulative since the API last restarted — tokens by model,
-requests by application, workflow runs with mean latency, applications
+answers by application, workflow runs with mean latency, applications
 created/deleted — and the rest are per-5-minute trends: tokens by model, by
-workspace, by operation type, input vs output, requests by application, and
-message latency p50/p95/p99. Why the cumulative ones lead is explained below.
+workspace, by operation type, input vs output, answers by application, and
+message latency p50/p95/p99.
+
+**"Answers", not "requests".** `dify_requests_total` counts every operation:
+one conversation turn adds a `message` *and* a `dataset_retrieval`, and a new
+conversation adds a `generate_name` for its title — the last one without an
+`app_id`, so it plotted as an unlabelled second line. The panels filter to
+`type="message"`; checked against Dify's database, six answers since the API's
+last restart on both sides.
+
+**The per-5-minute token panel overstates.** `increase()` extrapolates to the
+window's edges: a turn of exactly 4305 tokens showed as ~4.8k. The cumulative
+panel matched Dify's record to the token. Why the cumulative ones lead is explained below.
 
 Every one of its 15 queries was run as a **range** query over the dashboard's
 window before shipping; the rare-event ones were proven against a historical

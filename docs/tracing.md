@@ -122,6 +122,12 @@ Dify's recorded provider latency 8.01 s; the difference was not investigated.
 - **"Success" in the worker log means handed to the exporter**, not delivered.
   Check Tempo. (The save-time connectivity check does send a real span — one
   arrived when the setting was saved — but nothing blocks saving if it fails.)
+- **They arrive without a service name**, so the console first listed them
+  as `unknown`. The platform collector now fills it from
+  `openinference.project.name` (a `resource` processor with `insert`, which
+  writes only when the key is absent). Proven with two synthetic spans: one
+  without a name came out as `dify-demo`, one already named kept its name. The
+  platform, not the application, decides how the data looks.
 - Queries: `{ span.openinference.span.kind = "LLM" }` for model calls,
   `{ resource.openinference.project.name = "dify-demo" }` for everything from
   the app.
