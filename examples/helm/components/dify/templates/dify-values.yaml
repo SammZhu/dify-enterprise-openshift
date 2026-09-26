@@ -39,6 +39,16 @@ metadata:
 data:
   dify-values.yaml: |
     global:
+      # --- Trace sampling -------------------------------------------------
+      # The chart defaults to 0.2: one request in five is traced, so the
+      # conversation you just demonstrated is usually absent from Observe ->
+      # Traces. Metrics are counters and are not affected. 1.0 traces every
+      # request; lower it where the overhead matters. Rendered as
+      # OTEL_SAMPLING_RATE into the api, worker, worker-beat, trigger-worker
+      # and plugin-daemon ConfigMaps.
+      otel:
+        samplingRate: "{{ .Values.dify.otel.samplingRate }}"
+
       # --- The 6 domains Dify Enterprise requires -------------------------
       consoleApiDomain: "{{ $console }}"
       consoleWebDomain: "{{ $console }}"

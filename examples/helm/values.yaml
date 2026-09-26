@@ -191,6 +191,10 @@ components:
   # the Dify chart will consume. See components/dify/values.yaml.
   dify:
     enabled: true
+    # Trace sampling for Dify's OpenTelemetry export. The chart's own default is
+    # 0.2; 1.0 makes every conversation findable in Observe -> Traces.
+    otel:
+      samplingRate: "1.0"
     # Set to true once you have the chart repo credentials; see README.
     chartAvailable: false
     chartRepo: ""        # e.g. https://<dify-provided-helm-repo>

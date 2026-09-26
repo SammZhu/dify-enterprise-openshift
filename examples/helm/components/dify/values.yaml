@@ -3,6 +3,8 @@
 # scripts/render-dify-values.sh resolves against cluster secrets at install time.
 dify:
   enabled: true
+  otel:
+    samplingRate: "1.0"
   namespace: dify
   serviceAccountName: dify
   chartAvailable: false

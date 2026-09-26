@@ -97,10 +97,23 @@ Worth stating plainly in front of a customer:
    into five ConfigMaps (api, worker, worker-beat, trigger-worker, plugin
    daemon). This looked like a regression at first: after a restart, two
    knowledge-base questions produced no retrieval trace while Qdrant's access
-   log showed both searches succeeding. Neither had been sampled. **For a demo,
-   ask the question two or three times, or raise the rate** (`1.0` traces every
-   request, at a cost in overhead that is a production decision). Metrics are
-   not sampled — they are counters.
+   log showed both searches succeeding. Neither had been sampled.
+
+   **This repository now sets `1.0`** (`components.dify.otel.samplingRate`), and
+   this cluster was switched on 2026-09-26 by editing those five ConfigMaps and
+   restarting their deployments. Verified two ways:
+
+   - The first knowledge-base question afterwards produced its retrieval trace
+     (`RetrievalService.retrieve`, 93 spans), where the two before it had not.
+   - `GET /health` traces — kubelet probes, a request that arrives whether or
+     not anyone is using Dify — went from **3.0 to 9.8 per minute (3.3×)**.
+     Three different query forms gave the same counts, and neither collector
+     logged a drop. That is clearly more than before, but **not the 5× a strict
+     one-in-five sampler predicts**, and the gap is not explained. Treat the
+     sampling rate as "much higher", not as proven to be exactly 100%.
+
+   Lower it where the overhead matters. Metrics are not sampled — they are
+   counters.
 
    The reliable evidence that a retrieval happened is **Qdrant's own access
    log** (`oc logs sts/dify-qdrant | grep points/search`), not the trace and not

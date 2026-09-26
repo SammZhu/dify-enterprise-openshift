@@ -39,7 +39,7 @@ them up** — see the next section.
 
 ## Changed on 2026-09-26 — read before the next `helm upgrade`
 
-Two things changed under the running installation. Both are already applied to
+Three things changed under the running installation. Both are already applied to
 the chart's generated Secrets and ConfigMaps, so everything works now — but
 **Helm's stored values are stale**.
 
@@ -49,6 +49,11 @@ the chart's generated Secrets and ConfigMaps, so everything works now — but
    community images are no longer public and the pod could not be rescheduled.
    All 15 objects were copied and verified byte-for-byte, including the tenant
    private key.
+
+3. **Trace sampling raised from 0.2 to 1.0** (`global.otel.samplingRate`), so
+   every conversation can be found in the console's Traces page. Applied to the
+   five ConfigMaps that carry `OTEL_SAMPLING_RATE`; the rendered values carry it
+   too.
 
 So before any `helm upgrade`, **re-render the values**:
 
