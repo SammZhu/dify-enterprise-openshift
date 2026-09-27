@@ -93,13 +93,11 @@ run in-cluster, so budget for all of it.
 
 ## Install
 
-GitOps syncs everything in waves (prereqs → data tier → Dify). The one manual
-step is the plugin registry secret, which holds a token:
-
-```bash
-# Create the plugin registry secret (name is fixed by Dify)
-./scripts/create-image-repo-secret.sh internal dify
-```
+GitOps syncs everything in waves (prereqs → data tier → Dify → tracing and
+logging), including the plugin registry secret, which a Job mints on the
+cluster for the internal registry. What still takes a person — the License,
+SSO clients, and the settings stored in Dify's database — and in what order:
+**[docs/rebuild.md](docs/rebuild.md)**.
 
 Dify itself is installed by ArgoCD (`field-content-dify-chart`). The chart
 cannot reference an existing Secret, so ArgoCD renders it with credential

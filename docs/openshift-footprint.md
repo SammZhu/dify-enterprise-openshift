@@ -43,7 +43,7 @@ team. The Dify namespace's users hold namespace `admin` plus a namespace-scoped
 | Pod security | SCC | `anyuid` bound to the **group** `system:serviceaccounts:dify` (the chart's SAs are release-named); `dify-sandbox`; `dify-nonroot` | cluster + ns | `prereqs` |
 | Network | NetworkPolicy | `sandbox-egress` | namespace | Dify chart |
 | Ingress | Router, Routes | 6 Routes, **edge / Redirect**, router's wildcard certificate, `timeout: 600s` for streaming | namespace | Dify chart (`global.openshift.routes`), values from `components/dify` |
-| Images | Internal registry, ImageStreams | Plugins built in-cluster by Kaniko and pushed here; `system:image-builder` for the namespace's SAs | namespace | `prereqs`; `image-repo-secret` by `scripts/create-image-repo-secret.sh` |
+| Images | Internal registry, ImageStreams | Plugins built in-cluster by Kaniko and pushed here; `system:image-builder` for the namespace's SAs | namespace | `prereqs`, including `image-repo-secret` (a Job mints it for the internal registry; the script is for an external one) |
 | Block storage | ODF (external Ceph RBD) | 6 PVCs on `ocs-external-storagecluster-ceph-rbd` | namespace | data-tier components |
 | Object storage | ODF Multicloud Object Gateway | ObjectBucketClaim `dify-objectstorage` → bucket `dify-dify`, endpoint `http://s3.openshift-storage.svc:80` | namespace | `objectstorage` (default) |
 | Identity | Red Hat build of Keycloak | Realm `sso` — the one the cluster's own OAuth already uses — with clients `dify-enterprise` and `dify-dashboard`, confidential, PKCE S256 enforced | keycloak ns | script / opt-in job |
@@ -70,7 +70,6 @@ Where the running environment and the repository differ, and why:
 | Object | State | Why | Rebuild / action |
 |---|---|---|---|
 | RHBK clients and `dify-sso-*` Secrets | Script | Secrets must not be in Git; the client lives in another namespace | `scripts/create-sso-client.sh workspace` / `dashboard` |
-| `image-repo-secret` | Script | Holds a registry token | `scripts/create-image-repo-secret.sh` |
 | Helm release records `sh.helm.release.v1.dify.v*` | Left from the manual install | Dify is installed by ArgoCD since 2026-09-26; the records were kept by decision | **Their stored values are stale** (pre-rotation credentials, MinIO endpoint). Do not `helm upgrade` or `--reuse-values` — see [gitops-dify-chart.md](gitops-dify-chart.md) |
 | Redis list `trigger_refresh_publisher` (~1 message/min, 3.0 MB on 09-26) | Growing | Upstream: a beat task on a queue no worker consumes | Deliberately left; see handover.md item 13 |
 | RoleBinding `dify-dify-enterprise-sandbox-privileged` | From Dify's chart | Its SCC templates bind `privileged` to the sandbox | Unused — the sandbox runs under `dify-sandbox` — but a silent fallback if the sandbox ever asks for more. Ask Dify to disable their SCC templates |

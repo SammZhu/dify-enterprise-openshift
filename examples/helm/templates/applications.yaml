@@ -49,6 +49,9 @@ spec:
             count: {{ .Values.user.count }}
           imageBuilder:
             enabled: {{ .Values.components.prereqs.imageBuilder.enabled }}
+          imageRepoSecret:
+            enabled: {{ .Values.components.prereqs.imageRepoSecret.enabled }}
+            registry: {{ .Values.components.prereqs.imageRepoSecret.registry }}
           sandboxScc:
             enabled: {{ .Values.components.prereqs.sandboxScc.enabled }}
             name: {{ .Values.components.prereqs.sandboxScc.name }}

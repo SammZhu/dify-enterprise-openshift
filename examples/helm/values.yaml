@@ -58,6 +58,13 @@ components:
     # Push rights to the internal registry for the Kaniko plugin build.
     imageBuilder:
       enabled: true
+    # image-repo-secret for the OpenShift internal registry, minted on the
+    # cluster (image-repo-secret-job.yaml). An existing Secret is never touched,
+    # so for an external registry create it with
+    # scripts/create-image-repo-secret.sh external ... instead.
+    imageRepoSecret:
+      enabled: true
+      registry: image-registry.openshift-image-registry.svc:5000
     sandboxScc:
       enabled: true
       name: dify-sandbox

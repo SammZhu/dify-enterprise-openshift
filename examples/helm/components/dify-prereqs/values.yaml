@@ -92,3 +92,10 @@ prereqs:
   # Kaniko plugin build. Not required if plugins push to an external registry.
   imageBuilder:
     enabled: true
+  # image-repo-secret for the OpenShift internal registry, minted on the
+  # cluster (image-repo-secret-job.yaml). An existing Secret is never touched,
+  # so for an external registry create it with
+  # scripts/create-image-repo-secret.sh external ... instead.
+  imageRepoSecret:
+    enabled: true
+    registry: image-registry.openshift-image-registry.svc:5000
