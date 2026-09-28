@@ -49,6 +49,7 @@ spec:
             count: {{ .Values.user.count }}
           imageBuilder:
             enabled: {{ .Values.components.prereqs.imageBuilder.enabled }}
+          minioCredentials: {{ .Values.components.minio.enabled }}
           imageRepoSecret:
             enabled: {{ .Values.components.prereqs.imageRepoSecret.enabled }}
             registry: {{ .Values.components.prereqs.imageRepoSecret.registry }}

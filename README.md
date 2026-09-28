@@ -99,6 +99,11 @@ cluster for the internal registry. What still takes a person — the License,
 SSO clients, and the settings stored in Dify's database — and in what order:
 **[docs/rebuild.md](docs/rebuild.md)**.
 
+On a cluster that was not ordered as Field Sourced Content, run
+`./scripts/bootstrap.sh` first: it detects what the platform provides and adds
+only what is missing — OpenShift GitOps, ArgoCD's cluster-admin grant, the
+parent Application.
+
 Dify itself is installed by ArgoCD (`field-content-dify-chart`). The chart
 cannot reference an existing Secret, so ArgoCD renders it with credential
 placeholders and a Job resolves them on the cluster — no credential passes

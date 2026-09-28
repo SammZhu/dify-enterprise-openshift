@@ -12,6 +12,8 @@ prereqs:
     postgresqlDatabase: dify
     postgresqlUsername: dify
     minioBucket: dify
+  # Generate dify-minio only for the minio component (off by default).
+  minioCredentials: false
   # Grants the RHDP-provisioned users (user1..userN) admin of this namespace,
   # so the Dify engineers can install and troubleshoot without sharing the
   # cluster admin account. Adjust prefix if your users are named differently.

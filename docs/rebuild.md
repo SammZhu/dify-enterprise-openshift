@@ -3,19 +3,50 @@
 What a new environment gets without anyone touching it, what still takes a
 person, in which order, and how to tell each step worked.
 
-> **Not yet run end to end.** Every component below has been verified on the
-> 2026-09-26 cluster, but several were *adopted* there — taken over from
-> objects that already existed — rather than installed from nothing: the Dify
-> chart, `cluster-monitoring`, tracing, logging, and the `image-repo-secret`
-> Job. Their fresh-install paths were tested in pieces (scratch namespaces,
-> fake credentials, simulated syncs), not on a new cluster. The first rebuild
-> is that test; note anything that differs from this page.
+> **Verified from nothing on 2026-09-28** — the automated part. A new RHDP
+> Open Environment cluster (CNV, OpenShift 4.21.33, 3 workers × 8C/32G) went
+> from `scripts/bootstrap.sh --apply` to all 13 Applications Synced/Healthy in
+> about 4½ minutes, with every product checked rather than the status colour:
+> 16/16 Dify Deployments ready, the resolver's dry run 0 differences from Git,
+> no authentication errors, LokiStack, forwarder and Tempo Ready, logs from 18
+> containers in Loki. The manual steps in section 3 have not been re-run on a
+> fresh cluster yet.
 
 ## 1. Order
 
-Field Sourced Content — OpenShift Base, with this repository as the GitOps
+**Field Sourced Content** — OpenShift Base, with this repository as the GitOps
 repo. Parameters and the lifespan settings to change straight away:
-[ordering.md](ordering.md).
+[ordering.md](ordering.md). GitOps then starts by itself; go to section 2.
+
+**Any other cluster** — for example RHDP's Open Environment. Nothing installs
+the GitOps side for you, so log in as cluster-admin and run:
+
+```bash
+./scripts/bootstrap.sh            # read-only: what the platform provides, and the plan
+./scripts/bootstrap.sh --apply    # install what is missing, create the parent Application
+```
+
+It uses whatever the platform already has and supplies only the rest:
+OpenShift GitOps if absent, the cluster-admin grant for ArgoCD's controller
+that Field Sourced Content also makes, and the parent Application with the
+values Field Sourced Content would have injected — apps domain, API URL,
+Keycloak user count, default StorageClass. It stops, naming the gap, where it
+cannot supply something yet: no ODF object gateway, no default StorageClass,
+a disabled internal registry. It never touches a parent Application it did not
+create.
+
+The model endpoint is the one thing it cannot find. To reuse a LiteMaaS key
+from a Field Sourced Content environment, keep it in a file only you can read
+and pass it through the environment — the key goes to the cluster through
+stdin, never to Git or the terminal:
+
+```bash
+set -a; . ~/.config/dify-envs/litemaas.env; set +a    # LITEMAAS_API_URL / _API_KEY / _MODEL
+./scripts/bootstrap.sh --apply                         # re-running updates the parent it made
+```
+
+Sizing: 3 workers × 8C/32G held everything. LokiStack `1x.pico` alone
+requests 7 vCPU and 17 GiB; 4C/8G workers are too small.
 
 ## 2. Wait for GitOps
 
@@ -46,6 +77,18 @@ What to expect on the way, none of it a fault:
   `oc logs -n dify job/dify-chart-resolver`.
 - **Loki answers `429` for about a minute** while the forwarder ships the logs
   already on the nodes.
+- **`field-content-plugin-crds` may show `Missing` after its first sync** even
+  though the CRD exists — ArgoCD applies it without its tracking annotation.
+  A refresh clears it: `oc annotate application.argoproj.io field-content-plugin-crds -n openshift-gitops argocd.argoproj.io/refresh=hard --overwrite`.
+
+What the colours do not tell you:
+
+- **`field-content-logging` is `Healthy` long before Loki is.** ArgoCD has no
+  health check for `LokiStack` or `ClusterLogForwarder`, so it reports the
+  Application healthy from the start. Check them directly:
+  `oc get lokistack,clusterlogforwarder -n openshift-logging` — both `Ready`.
+- **No `dify_*` metrics until Dify is used.** The scrape target is up at once;
+  the series appear with the first requests.
 
 Then:
 
