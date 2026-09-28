@@ -9,8 +9,22 @@ person, in which order, and how to tell each step worked.
 > about 4½ minutes, with every product checked rather than the status colour:
 > 16/16 Dify Deployments ready, the resolver's dry run 0 differences from Git,
 > no authentication errors, LokiStack, forwarder and Tempo Ready, logs from 18
-> containers in Loki. The manual steps in section 3 have not been re-run on a
-> fresh cluster yet.
+> containers in Loki.
+>
+> Then each thing the repository sets up was exercised, not just deployed —
+> from inside the Dify API pod, with the credentials the resolver had filled in:
+> the embedder returned 768-dimension vectors; an object written to the bucket
+> with Dify's own S3 settings read back identical and deleted cleanly; the
+> sandbox ran Python under its dedicated SCC; the `image-repo-secret` token may
+> start a push to `dify/` in the internal registry and is refused for
+> `openshift/`; `create-sso-client.sh` made both clients confidential, PKCE
+> S256 enforced, and Keycloak then rejected an authorization request without a
+> code challenge and one with an unregistered redirect URI.
+>
+> Not verified on the new cluster: `dify_*` metrics and traces from Dify,
+> which need Dify in use (License, a model, the telemetry push setting). Both
+> were verified on the Field Sourced Content cluster with the same
+> configuration. The manual steps in section 3 have not been re-run.
 
 ## 1. Order
 
