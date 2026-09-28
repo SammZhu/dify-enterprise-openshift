@@ -24,7 +24,8 @@ person, in which order, and how to tell each step worked.
 > Not verified on the new cluster: `dify_*` metrics and traces from Dify,
 > which need Dify in use (License, a model, the telemetry push setting). Both
 > were verified on the Field Sourced Content cluster with the same
-> configuration. The manual steps in section 3 have not been re-run.
+> configuration. Of the manual steps in section 3, only step 2 (the SSO
+> clients) has been run on the new cluster.
 
 ## 1. Order
 
@@ -33,7 +34,8 @@ repo. Parameters and the lifespan settings to change straight away:
 [ordering.md](ordering.md). GitOps then starts by itself; go to section 2.
 
 **Any other cluster** — for example RHDP's Open Environment. Nothing installs
-the GitOps side for you, so log in as cluster-admin and run:
+the GitOps side for you. From a machine with `oc`, `curl` and `python3`, log in
+as a cluster-admin (`oc login ...`) and run:
 
 ```bash
 ./scripts/bootstrap.sh            # read-only: what the platform provides, and the plan
@@ -88,10 +90,14 @@ What to expect on the way, none of it a fault:
 - **Tracing and logging fail their first sync.** Their Subscriptions install
   operators whose CRDs arrive minutes later; both Applications retry, up to ten
   times with back-off.
-- **Dify's pods restart once or twice.** They start before the resolver Job has
-  filled in their credentials, fail to log in, and are restarted by it. The
-  Job's log says what it wrote:
-  `oc logs -n dify job/dify-chart-resolver`.
+- **Some Dify pods restart once or twice in the first minute.** The components
+  wait on each other at start-up — on the new cluster the plugin daemon
+  panicked because the plugin connector was not up yet, and the plugin manager
+  exited because the enterprise service had not created its tables yet. Both
+  recovered by themselves within 30 seconds. The resolver Job also restarts
+  every Dify Deployment once, after writing their credentials; its log says
+  what it wrote: `oc logs -n dify job/dify-chart-resolver`. Restarts that keep
+  climbing after the first few minutes are a fault.
 - **Loki answers `429` for about a minute** while the forwarder ships the logs
   already on the nodes.
 - **`field-content-plugin-crds` may show `Missing` after its first sync** even
@@ -120,7 +126,7 @@ In this order — each step needs the one before it.
 | # | Step | How | Check |
 |---|---|---|---|
 | 1 | **Activate the Dify License** | Enterprise dashboard, `https://dify-enterprise.<apps domain>`. Comes with the Dify contract; not in this repo. Whether a License survives a rebuild of a short-lived environment is still an open question — ask Dify before relying on it | Dashboard shows the License active |
-| 2 | **Create the two SSO clients** | `./scripts/create-sso-client.sh workspace` and `... dashboard` — or `prereqs.sso.enabled: true`, at the cost of a cross-namespace grant ([sso-rhbk.md](sso-rhbk.md)) | `secret/dify-sso-client` and `dify-sso-dashboard-client` exist |
+| 2 | **Create the two SSO clients** | `./scripts/create-sso-client.sh workspace` and `... dashboard` — or `prereqs.sso.enabled: true`, at the cost of a cross-namespace grant ([sso-rhbk.md](sso-rhbk.md)) | `secret/dify-sso-client` and `dify-sso-dashboard-client` exist, each secret 32 characters |
 | 3 | **Enter the settings that live in Dify's database** | [handover.md → Settings that live in Dify](handover.md#settings-that-live-in-dify-not-in-git): member SSO, admin SSO, telemetry push, per-app Phoenix tracing | Signing in through Keycloak works; Observe → Traces shows `langgenius/dify` |
 | 4 | **Model providers** | [handover.md → Configuring the model provider](handover.md#configuring-the-model-provider): LiteMaaS for chat, the in-cluster embedder for embeddings | A test prompt answers |
 | 5 | **Demo content** | A knowledge base and an app, as in [demo-script.md](demo-script.md) | The six acts of the demo script |
