@@ -95,6 +95,14 @@ fi
                         || say "  - OpenShift GitOps: install the operator (channel latest), wait for its default instance"
 say "  - grant the ArgoCD application controller cluster-admin, as Field Sourced Content does"
 say "    (the components create SCCs, operators and cluster RBAC)"
+ME=$(oc whoami)
+if [ "$(oc get group cluster-admins -o jsonpath='{.users}' 2>/dev/null | grep -c "\"$ME\"")" = 0 ]; then
+  say "  - add $ME to group cluster-admins: ArgoCD's default policy makes only that group admin, and"
+  say "    a user who is cluster-admin through a user binding otherwise sees an empty ArgoCD UI"
+  ADD_TO_GROUP=1
+else
+  ADD_TO_GROUP=0
+fi
 if [ "$MCG" = present ]; then
   say "  - object storage: use the platform's ODF object gateway"
 else
@@ -176,6 +184,11 @@ subjects:
     name: openshift-gitops-argocd-application-controller
     namespace: $ARGO_NS
 EOF
+
+if [ "$ADD_TO_GROUP" = 1 ]; then
+  say "Adding $ME to group cluster-admins (log out of ArgoCD and back in to pick it up)"
+  oc adm groups new cluster-admins "$ME" 2>/dev/null || oc adm groups add-users cluster-admins "$ME"
+fi
 
 say "Applying parent Application $PARENT"
 # The model key goes to the cluster through stdin only, as Field Sourced

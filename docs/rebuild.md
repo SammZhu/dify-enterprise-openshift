@@ -28,7 +28,10 @@ the GitOps side for you, so log in as cluster-admin and run:
 
 It uses whatever the platform already has and supplies only the rest:
 OpenShift GitOps if absent, the cluster-admin grant for ArgoCD's controller
-that Field Sourced Content also makes, and the parent Application with the
+that Field Sourced Content also makes, membership of group `cluster-admins`
+for the user running it (ArgoCD's default policy makes only that group admin;
+a cluster-admin through a user binding otherwise sees an **empty ArgoCD UI** —
+log out of ArgoCD and back in after it is added), and the parent Application with the
 values Field Sourced Content would have injected — apps domain, API URL,
 Keycloak user count, default StorageClass. It stops, naming the gap, where it
 cannot supply something yet: no ODF object gateway, no default StorageClass,
