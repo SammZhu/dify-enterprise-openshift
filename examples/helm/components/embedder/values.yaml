@@ -12,6 +12,10 @@ embedder:
   serviceAccountName: dify
   image: docker.io/ollama/ollama:latest
   model: nomic-embed-text
+  pullModel: true
+  # Optional image containing the Ollama models directory at /models.
+  # Built on the connected side; copied into the PVC before Ollama starts.
+  modelImage: ""
   dimensions: 768
   storage:
     size: 10Gi

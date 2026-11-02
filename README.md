@@ -93,6 +93,14 @@ run in-cluster, so budget for all of it.
 
 ## Install
 
+### Disconnected customer environments (no existing Git or registry)
+
+An additional local installation path uses one Linux Podman host to provide a TLS container registry and Python wheel index. It carries local Helm charts, source, OCI image archives, approved plugins and optional model files into an existing disconnected OpenShift cluster, without ArgoCD or a Git server.
+
+See [the installation guide (Chinese)](docs/disconnected-install.md) and [acceptance checklist](docs/disconnected-validation.md). Start from `examples/helm/values-disconnected.yaml` and `scripts/offline.py --help`. This path has real-chart rendering and mocked export/import/install tests; a real disconnected cluster, offline License activation and approved plugins still need end-to-end acceptance. The online Demo procedure below remains the default.
+
+### Online Demo / GitOps
+
 GitOps syncs everything in waves (prereqs → data tier → Dify → tracing and
 logging), including the plugin registry secret, which a Job mints on the
 cluster for the internal registry. What still takes a person — the License,
