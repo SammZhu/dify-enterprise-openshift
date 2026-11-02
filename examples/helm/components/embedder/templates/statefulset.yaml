@@ -35,6 +35,15 @@ spec:
         demo.redhat.com/application: "dify-enterprise"
     spec:
       serviceAccountName: {{ .Values.embedder.serviceAccountName }}
+      {{- if .Values.embedder.modelImage }}
+      initContainers:
+        - name: seed-models
+          image: {{ .Values.embedder.modelImage | quote }}
+          command: ["/bin/sh", "-ec", "cp -R /models/. /target/"]
+          volumeMounts:
+            - name: models
+              mountPath: /target
+      {{- end }}
       containers:
         - name: ollama
           image: {{ .Values.embedder.image }}
@@ -62,8 +71,14 @@ spec:
               if ollama list | grep -q '{{ .Values.embedder.model }}'; then
                 echo "model {{ .Values.embedder.model }} already present"
               else
+                {{- if .Values.embedder.pullModel }}
                 echo "pulling {{ .Values.embedder.model }}..."
                 ollama pull {{ .Values.embedder.model }}
+                {{- else }}
+                echo "required model is absent; offline mode forbids downloading it" >&2
+                kill "$SERVER_PID"
+                exit 1
+                {{- end }}
               fi
               echo "embedder ready"
               wait $SERVER_PID

@@ -22,3 +22,20 @@ kubeconfig*
 # To commit a specific captured file anyway, after reading it:
 #   git add -f captured/<file>
 captured/
+
+# Offline delivery artifacts and customer registry credentials.
+/offline-bundle*/
+/offline-state*/
+/customer*.yaml
+/customer*.yml
+auth.json
+.dockerconfigjson
+htpasswd
+*.key
+*.p12
+*.pfx
+.kube/
+__pycache__/
+*.pyc
+.venv/
+offline-venv/

@@ -18,6 +18,8 @@ resolver Job in components/dify-chart-glue does.
 {{- $ent := printf "%s.%s" $h.enterprisePrefix $d }}
 {{- $trigger := printf "%s.%s" $h.triggerPrefix $d -}}
 global:
+  marketplace:
+    enabled: {{ .Values.dify.marketplaceEnabled }}
   # --- Trace sampling -------------------------------------------------
   # The chart defaults to 0.2: one request in five is traced, so the
   # conversation you just demonstrated is usually absent from Observe ->
@@ -160,6 +162,4 @@ plugin_connector:
   insecureImageRepo: {{ .Values.dify.pluginRegistry.insecureImageRepo }}
   ecrRegion: "{{ .Values.dify.pluginRegistry.ecrRegion }}"
 
-marketplace:
-  enabled: {{ .Values.dify.marketplaceEnabled }}
 {{- end }}

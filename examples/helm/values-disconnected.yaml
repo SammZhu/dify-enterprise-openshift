@@ -1,0 +1,37 @@
+# Overlay for scripts/offline.py. No Git, ArgoCD or Operator installation.
+# Copy to customer.yaml and set deployer.domain and storage classes.
+namespace: dify
+deployer:
+  domain: apps.cluster.example.com
+components:
+  prereqs:
+    userAccess:
+      enabled: false
+  clusterMonitoring:
+    enabled: false
+  tracing:
+    enabled: false
+  logging:
+    enabled: false
+  objectStorage:
+    # Requires existing ODF MCG. For another S3 service see the offline guide.
+    enabled: true
+  embedder:
+    # Default: configure the customer's internal embedding endpoint in Dify.
+    # To host it here, enable and supply a prebuilt modelImage; no model pulls.
+    enabled: false
+    pullModel: false
+    modelImage: ""
+  dify:
+    marketplaceEnabled: false
+offline:
+  # Linux architecture of the OpenShift workers AND the Podman service host.
+  platform: linux/amd64
+  # TLS hostname reachable from every node, pod and the Podman host.
+  registry: registry.customer.example.com:5000
+  pipMirror: https://registry.customer.example.com:8443/simple/
+  registryImage: docker.io/library/registry:2.8.3
+  wheelServerImage: docker.io/library/nginx:1.29.4-alpine
+  # Optional upstream chart overrides, e.g. persistence.s3 for non-ODF S3.
+  # Do not put credentials here; use @@secret:name/key@@ references.
+  chartValues: {}

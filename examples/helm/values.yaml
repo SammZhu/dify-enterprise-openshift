@@ -214,6 +214,8 @@ components:
     enabled: true
     image: docker.io/ollama/ollama:latest
     model: nomic-embed-text
+    pullModel: true
+    modelImage: ""
     dimensions: 768
     storage:
       size: 10Gi

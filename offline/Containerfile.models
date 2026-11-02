@@ -1,0 +1,5 @@
+# Use a locally pulled Ollama base and an exported Ollama cache in ./models/.
+# Build with --pull=never, then refer to localhost/... in embedder.modelImage.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY models/ /models/
