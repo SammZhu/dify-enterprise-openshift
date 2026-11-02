@@ -1,0 +1,122 @@
+---
+- name: Validate one Jump and one Highside and ordered phase selection
+  ansible.builtin.assert:
+    that:
+      - groups['jump'] | length == 1
+      - groups['highside'] | length == 1
+      - rhdp_highside_host in groups['highside']
+      - rhdp_stages | length > 0
+      - rhdp_stages == (rhdp_all_stages | select('in', rhdp_stages) | list)
+    quiet: true
+
+- name: Allocate an identity for this playbook run
+  ansible.builtin.set_fact:
+    rhdp_run_id: "{{ 999999999999 | random }}-{{ 999999999999 | random }}"
+    rhdp_identity: {}
+
+- name: Hash the optional private overlay without returning its content
+  ansible.builtin.stat:
+    path: "{{ rhdp_values_overlay }}"
+    checksum_algorithm: sha256
+  register: rhdp_overlay_stat
+  when: rhdp_values_overlay is not none and not ansible_check_mode
+  no_log: true
+
+- name: Require an existing regular overlay when supplied
+  ansible.builtin.assert:
+    that: rhdp_overlay_stat.stat.isreg | default(false)
+    quiet: true
+  when: rhdp_values_overlay is not none and not ansible_check_mode
+  no_log: true
+
+- name: Construct the original Dify state binding
+  ansible.builtin.set_fact:
+    rhdp_settings:
+      workDir: "{{ rhdp_dify_work_dir }}"
+      remoteDir: "{{ rhdp_dify_remote_dir }}"
+      highside: "{{ rhdp_rsync_target }}"
+      sourceAuthfile: "{{ rhdp_source_authfile }}"
+      valuesOverlay: "{{ rhdp_values_overlay }}"
+      valuesOverlaySHA256: "{{ rhdp_overlay_stat.stat.checksum | default(none) }}"
+      clusterDir: "{{ rhdp_cluster_remote_dir }}"
+      jumpClusterDir: "{{ rhdp_cluster_work_dir }}"
+  no_log: true
+
+- name: Show selected phases without fetching credentials or connecting to AWS
+  ansible.builtin.debug:
+    msg:
+      stack: "{{ rhdp_stack }}"
+      phases: "{{ rhdp_stages }}"
+      scope: "Deployment acceptance only; no License, models, plugins or RAG acceptance."
+
+- name: Execute phases with exclusive state ownership
+  when: not ansible_check_mode
+  block:
+    - name: Acquire Jump state lease
+      rhdp_phase:
+        stack: "{{ rhdp_stack }}"
+        side: jump
+        operation: acquire
+        settings: "{{ rhdp_settings }}"
+        run_id: "{{ rhdp_run_id }}"
+      register: rhdp_jump_lease
+      no_log: true
+
+    - name: Acquire Highside state lease
+      rhdp_phase:
+        stack: "{{ rhdp_stack }}"
+        side: highside
+        operation: acquire
+        settings: "{{ rhdp_settings }}"
+        run_id: "{{ rhdp_run_id }}"
+      delegate_to: "{{ rhdp_highside_host }}"
+      register: rhdp_highside_lease
+      no_log: true
+
+    - name: Snapshot only the public Dify source dependencies
+      ansible.builtin.include_tasks: source.yml
+
+    - name: Read and bind the current Highside identity
+      ansible.builtin.include_tasks: phase.yml
+      vars:
+        rhdp_stage: probe
+        rhdp_side: highside
+
+    - name: Keep non-secret environment identity for subsequent phases
+      ansible.builtin.set_fact:
+        rhdp_identity: "{{ rhdp_phase_result.identity }}"
+      no_log: true
+
+
+    - name: Execute selected phases in dependency order
+      ansible.builtin.include_tasks: selected-stage.yml
+      loop: "{{ rhdp_stages }}"
+      loop_control:
+        loop_var: rhdp_selected_stage
+        label: "{{ rhdp_selected_stage }}"
+
+    - name: Report completion scope
+      ansible.builtin.debug:
+        msg: "{{ 'Dify deployment acceptance completed; License and business functions remain unverified.' if 'check' in rhdp_stages else 'Selected phases completed; final acceptance remains pending.' }}"
+
+  always:
+    - name: Release only this run's Highside lease
+      rhdp_phase:
+        stack: "{{ rhdp_stack }}"
+        side: highside
+        operation: release
+        settings: "{{ rhdp_settings }}"
+        run_id: "{{ rhdp_run_id }}"
+      delegate_to: "{{ rhdp_highside_host }}"
+      when: rhdp_highside_lease is defined and not (rhdp_highside_lease.failed | default(false))
+      no_log: true
+
+    - name: Release only this run's Jump lease
+      rhdp_phase:
+        stack: "{{ rhdp_stack }}"
+        side: jump
+        operation: release
+        settings: "{{ rhdp_settings }}"
+        run_id: "{{ rhdp_run_id }}"
+      when: rhdp_jump_lease is defined and not (rhdp_jump_lease.failed | default(false))
+      no_log: true

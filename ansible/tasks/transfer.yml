@@ -1,0 +1,30 @@
+---
+- name: Transfer the sealed Dify bundle without private state or source credentials
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - -a
+      - --partial
+      - --itemize-changes
+      - -e
+      - ssh -o BatchMode=yes -o ConnectTimeout=20
+      - "{{ rhdp_settings.workDir }}/bundle"
+      - "{{ rhdp_rsync_target }}:{{ rhdp_settings.remoteDir }}/"
+  async: "{{ rhdp_phase_timeout }}"
+  poll: "{{ rhdp_poll_seconds }}"
+  register: rhdp_payload_sync
+  changed_when: rhdp_payload_sync.stdout | length > 0
+  no_log: true
+
+- name: Verify the bundle on Highside
+  ansible.builtin.include_tasks: phase.yml
+  vars:
+    rhdp_stage: verify
+    rhdp_side: highside
+
+- name: Mark transfer complete only after target verification
+  ansible.builtin.include_tasks: phase.yml
+  vars:
+    rhdp_stage: transfer
+    rhdp_side: jump
+    rhdp_operation: mark

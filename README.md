@@ -95,6 +95,10 @@ run in-cluster, so budget for all of it.
 
 ### Disconnected customer environments (no existing Git or registry)
 
+Demo environment provisioning is maintained in the separate private repository [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation). Its Ansible `cluster.yml` builds and validates the internal SNO in the RHDP OpenShift Disconnected Workshop. This repository contains Dify application deployment only.
+
+For Dify deployment on an accepted workshop cluster, [the Dify Ansible playbook](docs/rhdp-dify-offline.md) chains the connected-side export, transfer, local Podman services, Helm installation and deployment checks. Deployment acceptance passed on OpenShift 4.20.8 with 19 Ready runtime Pods, PostgreSQL/Redis checks, authenticated TLS S3 roundtrip and HTTPS entry checks. License, models, plugins and RAG remain unverified; see the recorded scope and recovery steps.
+
 An additional local installation path uses one Linux Podman host to provide a TLS container registry and Python wheel index. It carries local Helm charts, source, OCI image archives, approved plugins and optional model files into an existing disconnected OpenShift cluster, without ArgoCD or a Git server.
 
 See [the installation guide (Chinese)](docs/disconnected-install.md) and [acceptance checklist](docs/disconnected-validation.md). Start from `examples/helm/values-disconnected.yaml` and `scripts/offline.py --help`. This path has real-chart rendering and mocked export/import/install tests; a real disconnected cluster, offline License activation and approved plugins still need end-to-end acceptance. The online Demo procedure below remains the default.

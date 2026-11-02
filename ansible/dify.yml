@@ -1,0 +1,12 @@
+---
+- name: Deploy and verify offline Dify on the accepted Workshop cluster
+  hosts: jump
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Run Dify automation
+      ansible.builtin.import_tasks: tasks/workflow.yml
+      vars:
+        rhdp_stack: dify
+        rhdp_stages: "{{ rhdp_dify_stages }}"
+        rhdp_all_stages: ['preflight', 'tools', 'prepare', 'transfer', 'network', 'services', 'import', 'install', 'check']

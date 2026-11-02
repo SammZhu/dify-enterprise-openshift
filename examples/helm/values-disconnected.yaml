@@ -32,6 +32,13 @@ offline:
   pipMirror: https://registry.customer.example.com:8443/simple/
   registryImage: docker.io/library/registry:2.8.3
   wheelServerImage: docker.io/library/nginx:1.29.4-alpine
+  # Optional single-host S3 test service behind the same TLS nginx.
+  # Disable components.objectStorage and components.minio when enabling it.
+  localS3:
+    enabled: false
+    image: docker.io/chrislusf/seaweedfs:4.51
+    port: 9444
+    bucket: dify
   # Optional upstream chart overrides, e.g. persistence.s3 for non-ODF S3.
   # Do not put credentials here; use @@secret:name/key@@ references.
   chartValues: {}

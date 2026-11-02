@@ -1,0 +1,12 @@
+rhdp_source_dir: "{{ playbook_dir | dirname }}"
+rhdp_highside_host: "{{ groups['highside'][0] }}"
+rhdp_rsync_target: highside
+rhdp_source_authfile: "{{ lookup('env', 'HOME') }}/pull-secret-example.json"
+rhdp_phase_timeout: 28800
+rhdp_poll_seconds: 20
+rhdp_cluster_work_dir: /mnt/low-side-data/rhdp-bootstrap
+rhdp_cluster_remote_dir: /mnt/high-side-data/rhdp-bootstrap
+rhdp_dify_work_dir: /mnt/low-side-data/dify-bootstrap
+rhdp_dify_remote_dir: /mnt/high-side-data/dify-bootstrap
+rhdp_values_overlay: null
+rhdp_dify_stages: [preflight, tools, prepare, transfer, network, services, import, install, check]
