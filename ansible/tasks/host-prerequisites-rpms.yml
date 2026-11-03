@@ -1,0 +1,80 @@
+---
+- name: Require a dedicated absolute RPM directory on the target
+  ansible.builtin.assert:
+    that:
+      - prerequisite_rpm_dir is match('^/[A-Za-z0-9_./-]+$')
+      - prerequisite_rpm_dir not in ['/', '/tmp', '/var/tmp']
+      - "'..' not in prerequisite_rpm_dir.split('/')"
+    quiet: true
+    fail_msg: Set prerequisite_rpm_dir to a dedicated directory of trusted OS RPMs and dependencies on the managed host.
+
+- name: Inspect the supplied directory without following its symlink
+  ansible.builtin.stat:
+    path: "{{ prerequisite_rpm_dir }}"
+    follow: false
+  register: prerequisite_rpm_stat
+
+- name: Require an existing real RPM directory
+  ansible.builtin.assert:
+    that:
+      - prerequisite_rpm_stat.stat.isdir | default(false)
+      - not prerequisite_rpm_stat.stat.islnk | default(false)
+    quiet: true
+
+- name: List only RPM files directly in this directory
+  ansible.builtin.find:
+    paths: "{{ prerequisite_rpm_dir }}"
+    patterns: '*.rpm'
+    file_type: file
+    recurse: false
+    follow: false
+  register: prerequisite_rpms
+
+- name: Require a nonempty RPM set
+  ansible.builtin.assert:
+    that: prerequisite_rpms.matched | int > 0
+    quiet: true
+    fail_msg: No RPM files found; provide the OS-matched prerequisites and their complete dependencies.
+
+- name: Show the exact local RPM inputs
+  ansible.builtin.debug:
+    msg:
+      files: "{{ prerequisite_rpms.files | map(attribute='path') | sort | list }}"
+      check_mode_scope: 'In --check, inputs are validated; signature, dependency solving and installation are verified only during execution.'
+
+- name: Install signed local RPMs with all remote repositories disabled
+  when: not ansible_check_mode
+  block:
+    - name: Allocate a private transaction configuration
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .dify-prerequisites-dnf.conf
+      register: prerequisite_dnf_conf
+
+    - name: Require local package signatures and disable DNF plugins
+      ansible.builtin.copy:
+        dest: "{{ prerequisite_dnf_conf.path }}"
+        mode: '0600'
+        content: |
+          [main]
+          plugins=0
+          gpgcheck=1
+          localpkg_gpgcheck=1
+          install_weak_deps=0
+
+    - name: Install only the supplied RPM set without accessing repositories
+      ansible.builtin.dnf:
+        name: "{{ prerequisite_rpms.files | map(attribute='path') | sort | list }}"
+        state: present
+        conf_file: "{{ prerequisite_dnf_conf.path }}"
+        disablerepo: ['*']
+        disable_plugin: ['*']
+        disable_gpg_check: false
+        install_weak_deps: false
+
+  always:
+    - name: Remove this transaction's temporary configuration
+      ansible.builtin.file:
+        path: "{{ prerequisite_dnf_conf.path }}"
+        state: absent
+      when: prerequisite_dnf_conf is defined and prerequisite_dnf_conf.path is defined

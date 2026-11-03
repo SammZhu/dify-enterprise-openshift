@@ -203,7 +203,8 @@ exec sudo -n /usr/bin/podman --cgroup-manager=cgroupfs "$@"
         staging.mkdir(exist_ok=True, mode=0o700)
         target = staging / 'ansible'; target.mkdir(exist_ok=True)
         public = ['ansible.cfg', 'requirements.txt', 'customer-install.yml',
-                  'customer-defaults.yml', 'customer-install.example.yml', 'customer-reset.yml']
+                  'customer-defaults.yml', 'customer-install.example.yml', 'customer-reset.yml',
+                  'host-prerequisites.yml', 'host-prerequisites.example.yml']
         for directory in ('library', 'module_utils', 'tasks', 'templates'):
             public += [str(p.relative_to(common.ROOT / 'ansible')) for p in (common.ROOT / 'ansible' / directory).rglob('*')
                        if p.is_file() and p.suffix in ('.py', '.yml', '.j2') and '__pycache__' not in p.parts and '.local.' not in p.name]

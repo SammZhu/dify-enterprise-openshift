@@ -198,4 +198,4 @@ Dify 3.9.8 CRD 控制器的 `40c5ee95.dify.ai` Lease，需将 `holderIdentity` �
 
 ## 验证边界
 
-清理逻辑通过临时目录与模拟集群/Podman 边界验证；本轮没有在真实客户或 Demo 集群执行破坏性清理与重装。它也不能自动证明独立于缓存的冷启动、存储物理擦除或完整业务验收。
+清理逻辑首先通过临时目录与模拟集群/Podman 边界验证。2026-11-03，用户在当前 RHDP 环境执行 `full` 清理，终端日志显示 namespace、host-data、finish 和租约释放均完成，recap 为 ok=21、changed=8、unreachable=0、failed=0。该记录依据用户提供的终端输出，未独立复核 CSI 底层存储回收；客户 Quick Start 的重新安装仍待验证。不能据此证明独立于缓存的冷启动、存储物理擦除或完整业务验收。

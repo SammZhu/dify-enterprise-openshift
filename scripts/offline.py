@@ -382,7 +382,7 @@ def prepare(args):
     for name in ("offline.py", "offline-post-render.sh", "start-offline-services.sh"):
         shutil.copy2(ROOT / "scripts" / name, bundle / "source/scripts" / name)
     (bundle / "docs").mkdir()
-    for name in ("customer-quickstart.md", "disconnected-reset.md", "disconnected-install.md", "disconnected-manual.md", "disconnected-validation.md", "rhdp-dify-offline.md"):
+    for name in ("customer-quickstart.md", "host-prerequisites.md", "disconnected-reset.md", "disconnected-install.md", "disconnected-manual.md", "disconnected-validation.md", "rhdp-dify-offline.md"):
         shutil.copy2(ROOT / "docs" / name, bundle / "docs" / name)
     shutil.copy2(ROOT / "README.md", bundle / "README.md")
     shutil.copy2(args.chart, bundle / "dify-enterprise.tgz")

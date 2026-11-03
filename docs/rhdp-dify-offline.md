@@ -147,4 +147,8 @@ RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工�
 
 ## 清理后重新验证
 
-在 Jump 使用 `rhdp-reset.yml` 通过原 SSH 配置管理 Highside，可预览应用/完整重置，按 [清理指南中的 RHDP 配置和步骤](disconnected-reset.md#2-rhdp-demo在-jump-上操作) 运行；不知道源码在哪时，该节提供独立下载命令和两侧路径表；它接受原 Highside 安装绑定，不要求在 Highside 安装 Ansible 控制端。清理成功后仍在 Jump，通过原 `dify.yml` 的 services/import/install/check 阶段恢复并验收。不会删除 Workshop 原有 mirror-registry 或集群级共享资源；本轮未执行真实破坏性清理。
+在 Jump 使用 `rhdp-reset.yml` 通过原 SSH 配置管理 Highside，可预览应用/完整重置，按 [清理指南中的 RHDP 配置和步骤](disconnected-reset.md#2-rhdp-demo在-jump-上操作) 运行；不知道源码在哪时，该节提供独立下载命令和两侧路径表；它接受原 Highside 安装绑定，不要求在 Highside 安装 Ansible 控制端。清理成功后仍在 Jump，通过原 `dify.yml` 的 services/import/install/check 阶段恢复并验收。不会删除 Workshop 原有 mirror-registry 或集群级共享资源；用户于 2026-11-03 提供了同一 RHDP 环境 full 清理成功日志（failed=0）；详细范围与重装验证边界见清理指南。
+
+## 按客户入口复验时的 Highside 前置
+
+RHDP 远程部署的 Highside Python 3.9 与客户入口在本地主机运行 Ansible 所需的 Python 3.12 是不同前提。若按客户 Quick Start 复验，在 Jump 用 [原生前置任务](host-prerequisites.md) 准备 Highside；该步骤不等于 Dify 全量原生化，也不代表离线应用安装阶段可以访问公网。

@@ -5,7 +5,7 @@ covering customer environments and Red Hat Demo Platform (RHDP) demonstrations.
 The repository includes online GitOps deployment and disconnected deployment
 using a standalone Podman host, local Helm charts and offline media.
 
-Customers can start with the [offline Quick Start](docs/customer-quickstart.md). For repeatable installation exercises, see the [Ansible reset and reinstall guide](docs/disconnected-reset.md).
+Customers can start with the [offline Quick Start](docs/customer-quickstart.md). Missing OS prerequisites can be prepared from an existing controller with the [native host prerequisites playbook](docs/host-prerequisites.md). For repeatable installation exercises, see the [Ansible reset and reinstall guide](docs/disconnected-reset.md).
 RHDP [Field Sourced Content](https://github.com/rhpds/field-sourced-content-template)
 is one deployment scenario; Demo cluster provisioning is maintained separately in
 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation).
