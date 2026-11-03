@@ -3,9 +3,9 @@
 Description=Dify offline Registry, wheel index and S3 boot recovery
 Wants=network-online.target
 After=network-online.target
-RequiresMountsFor={{ rhdp_settings.remoteDir }}/state {{ rhdp_settings.remoteDir }}/bundle
-ConditionPathExists={{ rhdp_settings.remoteDir }}/bundle/images.lock.yaml
-ConditionPathExists={{ rhdp_settings.remoteDir }}/state/auth.json
+RequiresMountsFor={{ dify_service_state }} {{ dify_service_bundle }}
+ConditionPathExists={{ dify_service_bundle }}/images.lock.yaml
+ConditionPathExists={{ dify_service_state }}/auth.json
 StartLimitIntervalSec=300
 StartLimitBurst=3
 

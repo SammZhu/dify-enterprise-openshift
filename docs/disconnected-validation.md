@@ -1,6 +1,6 @@
 # 离线安装验收记录
 
-RHDP 自动化入口见 [Ansible 主安装指南](disconnected-install.md)；客户通用底层操作见 [手动工具参考](disconnected-manual.md)。
+RHDP 自动化入口见 [Ansible 主安装指南](disconnected-install.md)；客户单机入口见 [客户 Quick Start](customer-quickstart.md)；其他拓扑见 [手动工具参考](disconnected-manual.md)。
 
 用本清单为每个客户/交付包保留独立记录。脚本测试通过不代表下面的现场项目已通过。
 
@@ -32,7 +32,7 @@ RHDP 自动化入口见 [Ansible 主安装指南](disconnected-install.md)；客
 - [ ] 安装期间不访问 GitHub、公共 Helm 仓库或公共镜像仓库。
 - [ ] 未创建 ArgoCD Application 或新的 Operator Subscription/CatalogSource。
 - [ ] 原有 Registry CA 条目保留，集群仍能访问原有内部 Registry。
-- [ ] Ansible check 阶段通过：运行 Pod Ready、镜像内部化、四个数据库、Redis PONG；RHDP 配置还验证 TLS S3 和 HTTPS。客户手动流程需分别完成底层检查与 S3/入口验收。
+- [ ] Ansible check 阶段通过：运行 Pod Ready、镜像内部化、四个数据库、Redis PONG；RHDP 和客户单机 Playbook 还验证 TLS S3 和 HTTPS。其他手动拓扑需分别完成 S3/入口验收。
 - [ ] 六个 Dify Route 可用，浏览器端也没有必要公网依赖。
 
 ## 功能

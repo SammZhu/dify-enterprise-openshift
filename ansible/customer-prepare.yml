@@ -1,0 +1,15 @@
+---
+- name: Customer offline Dify prepare
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: [customer-defaults.yml]
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Run the provider-independent customer workflow
+      ansible.builtin.import_tasks: tasks/customer-workflow.yml
+      vars:
+        customer_mode: prepare
+        customer_stages: "{{ customer_prepare_stages }}"
+        customer_all_stages: [preflight, tools, export, controller, package]

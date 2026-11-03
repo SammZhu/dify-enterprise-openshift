@@ -15,6 +15,7 @@ import sys
 import tarfile
 import time
 import urllib.request
+from urllib.parse import urlparse
 
 offline = None
 
@@ -80,9 +81,11 @@ class Workflow:
     def mark(self, stage): private(self.root / "stages" / (stage + ".json"), {"completedAt": time.time()})
 
 
+    def oc_args(self):
+        return [self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig"]
+
     def oc(self, *args, data=None):
-        return self.call([self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig",
-                          "--request-timeout=30s", *args], "oc", data=data, capture=True)
+        return self.call([*self.oc_args(), "--request-timeout=30s", *args], "oc", data=data, capture=True)
 
 
     def tools(self):
@@ -135,15 +138,17 @@ class Workflow:
                    "--output", self.bundle], "prepare")
 
 
-    def services(self):
-        if not self.done("network"):
+    def services(self, configure_network=True):
+        if configure_network and not self.done("network"):
             self.network(); self.mark("network")
         self.state = safe_root(self.state); certs = self.state / "certificates"; certs.mkdir(exist_ok=True, mode=0o700)
-        host = offline.read(self.bundle / "config.yaml")["offline"]["registry"].rsplit(":", 1)[0]
+        config = offline.read(self.bundle / "config.yaml")["offline"]
+        registry = config["registry"]
+        host = registry.rsplit(":", 1)[0]
         if not (certs / "server.crt").exists():
             if any(certs.iterdir()): raise ValueError("partial TLS state; refusing key replacement")
             self.call(["openssl", "req", "-x509", "-newkey", "rsa:3072", "-nodes", "-days", "365", "-keyout", certs / "ca.key",
-                       "-out", certs / "ca.crt", "-subj", "/CN=Dify Offline Demo CA", "-addext", "basicConstraints=critical,CA:TRUE"], "services")
+                       "-out", certs / "ca.crt", "-subj", "/CN=Dify Offline CA", "-addext", "basicConstraints=critical,CA:TRUE"], "services")
             self.call(["openssl", "req", "-new", "-newkey", "rsa:3072", "-nodes", "-keyout", certs / "server.key",
                        "-out", certs / "server.csr", "-subj", "/CN=" + host], "services")
             (certs / "server.ext").write_text("subjectAltName=DNS:" + host + "\nbasicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\n")
@@ -159,7 +164,6 @@ class Workflow:
             if not password_hash or not password_hash.startswith("$2"):
                 raise ValueError("host did not produce a valid bcrypt hash")
             (self.state / "htpasswd").write_text("offline:" + password_hash + "\n")
-            registry = host + ":5000"
             private(auth, {"auths": {registry: {"auth": base64.b64encode(("offline:" + registry_credential).encode()).decode()}}})
         names = ["dify-offline-registry", "dify-offline-pypi", "dify-offline-s3"]
         existing = [subprocess.run(["podman", "container", "exists", n], capture_output=True, env=self.env).returncode == 0 for n in names]
@@ -187,18 +191,21 @@ class Workflow:
             self.call(["bash", self.bundle / "source/scripts/start-offline-services.sh", self.bundle, self.state,
                        certs / "server.crt", certs / "server.key", self.state / "htpasswd"], "services")
         context = ssl.create_default_context(cafile=str(certs / "ca.crt"))
-        credential = json.loads(auth.read_text())["auths"][host + ":5000"]["auth"]
-        for port, path in ((5000, "/v2/"), (9443, "/simple/"), (9444, "/")):
+        credential = json.loads(auth.read_text())["auths"][registry]["auth"]
+        registry_port = int(registry.rsplit(":", 1)[1])
+        wheel_port = urlparse(config["pipMirror"]).port or 443
+        s3_port = config.get("localS3", {}).get("port", 9444)
+        for port, path in ((registry_port, "/v2/"), (wheel_port, "/simple/"), (s3_port, "/")):
             req = urllib.request.Request(f"https://{host}:{port}{path}")
-            if port == 5000: req.add_header("Authorization", "Basic " + credential)
+            if port == registry_port: req.add_header("Authorization", "Basic " + credential)
             for attempt in range(30):
                 try:
                     with urllib.request.urlopen(req, context=context, timeout=5) as result:
-                        if port == 9444:
+                        if port == s3_port:
                             raise ValueError("local S3 unexpectedly permits anonymous bucket listing")
                         if result.status == 200: break
                 except urllib.error.HTTPError as error:
-                    if port == 9444 and error.code == 403: break
+                    if port == s3_port and error.code == 403: break
                     if attempt == 29: raise ValueError("local TLS service returned an unexpected HTTP status")
                     time.sleep(2)
                 except (OSError, urllib.error.URLError):
@@ -255,7 +262,7 @@ class Workflow:
         # A restarted cluster can be healthy while application Pods are warming
         # up. Completed setup Jobs never become Ready and must be excluded.
         namespace = offline.read(self.bundle / "config.yaml")["namespace"]
-        self.call([self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig",
+        self.call([*self.oc_args(),
                    "wait", "pods", "-n", namespace, "--field-selector=status.phase!=Succeeded,status.phase!=Failed",
                    "--for=condition=Ready", "--timeout=600s"], "readiness")
         self.delivery("check")
@@ -263,7 +270,7 @@ class Workflow:
         router_ca = base64.b64decode(self.oc("get", "secret", "router-ca", "-n", "openshift-ingress-operator", "-o", "jsonpath={.data.tls\\.crt}"))
         (self.state / "router-ca.crt").write_bytes(router_ca)
         routes = json.loads(self.oc("get", "routes", "-n", "dify", "-o", "json"))["items"]
-        context = ssl.create_default_context(cadata=router_ca.decode()); endpoints = []
+        context = ssl.create_default_context(); context.load_verify_locations(cadata=router_ca.decode()); endpoints = []
         for route in routes:
             host = route["spec"]["host"]; url = "https://" + host + route["spec"].get("path", "/")
             try:
@@ -311,8 +318,8 @@ echo 'PASS: authenticated TLS S3 write/read/delete'
                    "volumes": [{"name": "ca", "secret": {"secretName": "offline-registry-ca"}}]}}}}
         result = json.loads(self.oc("create", "-f", "-", "-o", "json", data=json.dumps(job).encode())); name = result["metadata"]["name"]
         try:
-            self.call([self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig", "wait", "job/" + name,
+            self.call([*self.oc_args(), "wait", "job/" + name,
                        "-n", "dify", "--for=condition=complete", "--timeout=180s"], "s3-check")
         finally:
-            self.call([self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig", "logs", "job/" + name, "-n", "dify"], "s3-check")
+            self.call([*self.oc_args(), "logs", "job/" + name, "-n", "dify"], "s3-check")
         self.oc("delete", "job", name, "-n", "dify", "--wait=true")

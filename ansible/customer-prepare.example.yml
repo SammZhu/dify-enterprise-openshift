@@ -1,0 +1,11 @@
+---
+# Copy outside the source tree; replace all example values.
+customer_media_root: /var/tmp/dify-customer-media
+customer_source_authfile: /root/dify-private/source-auth.json
+customer_ocp_version: '4.20.8'
+customer_apps_domain: apps.cluster.customer.example.com
+customer_registry_host: registry.customer.example.com
+customer_storage_class: gp3-csi
+# Optional approved .difypkg files and their complete runtime wheel dependency set:
+# customer_plugins_dir: /root/dify-private/plugins
+# customer_wheels_dir: /root/dify-private/plugin-wheels
