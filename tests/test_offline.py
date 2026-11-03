@@ -393,6 +393,8 @@ class RealChartTests(unittest.TestCase):
             with tarfile.open(report['archive']) as media:
                 names = media.getnames()
                 self.assertIn('bundle/ansible/customer-install.yml', names)
+                self.assertIn('bundle/ansible/customer-reset.yml', names)
+                self.assertIn('bundle/docs/disconnected-reset.md', names)
                 self.assertIn('bundle/docs/customer-quickstart.md', names)
                 self.assertFalse(any('auth.json' in n or 'inventory.local' in n for n in names))
             playbook = Path(sys.executable).parent / 'ansible-playbook'

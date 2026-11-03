@@ -1,0 +1,20 @@
+---
+- name: Preview or reset Dify on Workshop Highside from Jump
+  hosts: highside
+  gather_facts: false
+  become: true
+  vars_files: [customer-defaults.yml]
+  tasks:
+    - name: Require exactly one Highside target
+      ansible.builtin.assert:
+        that: groups['highside'] | length == 1
+        quiet: true
+        fail_msg: Configure exactly one Highside host for this reset.
+
+    - name: Run the same guarded reset through the existing Highside connection
+      ansible.builtin.import_tasks: tasks/customer-reset-workflow.yml
+      vars:
+        customer_bundle_dir: "{{ rhdp_dify_remote_dir }}/bundle"
+        customer_state_root: "{{ rhdp_dify_remote_dir }}"
+        customer_kubeconfig: "{{ rhdp_cluster_remote_dir }}/cluster/auth/kubeconfig"
+        customer_context: "{{ rhdp_reset_context }}"

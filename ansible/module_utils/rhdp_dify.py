@@ -28,7 +28,14 @@ def bind_source(source_dir):
     ROOT = Path(source_dir).resolve()
     spec = importlib.util.spec_from_file_location("rhdp_offline_engine", ROOT / "scripts/offline.py")
     offline = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(offline)
+    # Source may be inside immutable offline media. Loading must not add pyc
+    # files and invalidate the sealed bundle before its first verification.
+    previous = sys.dont_write_bytecode
+    try:
+        sys.dont_write_bytecode = True
+        spec.loader.exec_module(offline)
+    finally:
+        sys.dont_write_bytecode = previous
 
 
 
@@ -186,7 +193,7 @@ class Workflow:
                 info = json.loads(self.call(["podman", "inspect", name], "services", capture=True))[0]
                 if info.get("Config", {}).get("Labels", {}).get("io.dify.offline.bundle") != owner:
                     raise ValueError("unmanaged Podman service; refusing to take over")
-            self.call(["podman", "start", *names], "services")
+            self.call(["podman", "start", "dify-offline-s3", "dify-offline-registry", "dify-offline-pypi"], "services")
         else:
             self.call(["bash", self.bundle / "source/scripts/start-offline-services.sh", self.bundle, self.state,
                        certs / "server.crt", certs / "server.key", self.state / "htpasswd"], "services")

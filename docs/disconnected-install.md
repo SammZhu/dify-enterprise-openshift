@@ -1,6 +1,6 @@
 # 使用 Ansible 离线部署 Dify
 
-**客户从 [客户 Quick Start](customer-quickstart.md) 开始：联网制作介质 → 搬运 → 离线单机 Podman 安装与验收。客户入口是 `customer-prepare.yml` / `customer-install.yml`。整体机制见 [自动化原理概览](customer-quickstart.md#先理解自动化如何工作)。下文保留 RHDP 专用操作流程。**
+**客户从 [客户 Quick Start](customer-quickstart.md) 开始：联网制作介质 → 搬运 → 离线单机 Podman 安装与验收。客户入口是 `customer-prepare.yml` / `customer-install.yml`。清理重装见 [Ansible 清理指南](disconnected-reset.md)。整体机制见 [自动化原理概览](customer-quickstart.md#先理解自动化如何工作)。下文保留 RHDP 专用操作流程。**
 
 **日常部署入口是 `ansible/dify.yml`，部署命令使用 `ansible-playbook`。** Ansible 负责主机连接、阶段顺序、制品传输、服务恢复和验收；`scripts/offline.py` 是内部调用的镜像/Helm 执行引擎，仍保留给底层维护与手动适配使用。迁移编排入口不意味着删除 Python 运行时。
 

@@ -1,0 +1,11 @@
+---
+- name: Preview or reset this Dify offline installation
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: [customer-defaults.yml]
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Run the local customer reset workflow
+      ansible.builtin.import_tasks: tasks/customer-reset-workflow.yml

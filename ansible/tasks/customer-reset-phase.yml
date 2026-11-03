@@ -1,0 +1,10 @@
+---
+- name: "Reset phase | {{ reset_action }}"
+  customer_reset:
+    action: "{{ reset_action }}"
+    mode: "{{ customer_reset_mode }}"
+    config: "{{ customer_reset_config }}"
+    run_id: "{{ reset_run_id }}"
+  async: "{{ customer_phase_timeout }}"
+  poll: 20
+  no_log: true
