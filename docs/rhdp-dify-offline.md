@@ -1,6 +1,6 @@
 # RHDP 离线集群上的 Dify 部署自动化
 
-入口是 `ansible/dify.yml`，在 **OpenShift Disconnected Workshop 的 Jump** 上执行。集群创建独立维护于私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)，本工程不再包含集群创建入口。客户侧的通用交付流程仍使用 [底层工具手动参考](disconnected-manual.md)。
+入口是 `ansible/dify.yml`，在 **OpenShift Disconnected Workshop 的 Jump** 上执行。集群创建独立维护于私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)，本工程不再包含集群创建入口。客户单机 Podman / 本地 S3 交付使用独立的 [客户 Quick Start](customer-quickstart.md)，其他拓扑见 [底层工具手动参考](disconnected-manual.md)。
 
 **部署验证状态：2026-11-02 已在当前真实 RHDP 环境完成部署验收。** 本轮没有 Enterprise 离线 License；覆盖工作负载、数据层、TLS S3 和 HTTPS 入口，模型、插件构建和 RAG 未验证。原部署为同一环境修复后续跑完成；没有在第二套全新环境重复验证。Ansible 迁移复验范围单独记录在下文。
 

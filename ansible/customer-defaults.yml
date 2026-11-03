@@ -1,0 +1,25 @@
+---
+# Public defaults only. Keep actual profiles and all credentials outside this tree.
+customer_source_dir: "{{ playbook_dir | dirname }}"
+customer_media_root: /var/tmp/dify-customer-media
+customer_state_root: /var/lib/dify-offline
+customer_bundle_dir: "{{ playbook_dir | dirname }}"
+customer_source_authfile: ''
+customer_ocp_version: ''
+customer_apps_domain: ''
+customer_registry_host: ''
+customer_storage_class: ''
+customer_registry_port: 5000
+customer_wheel_port: 9443
+customer_s3_port: 9444
+customer_values_overlay: ''
+customer_plugins_dir: ''
+customer_wheels_dir: ''
+customer_kubeconfig: ''
+customer_context: ''
+customer_tls_cert: ''
+customer_tls_key: ''
+customer_tls_ca: ''
+customer_phase_timeout: 28800
+customer_prepare_stages: [preflight, tools, export, controller, package]
+customer_install_stages: [preflight, verify, services, import, install, check]

@@ -1,5 +1,7 @@
 # 使用 Ansible 离线部署 Dify
 
+**客户从 [客户 Quick Start](customer-quickstart.md) 开始：联网制作介质 → 搬运 → 离线单机 Podman 安装与验收。客户入口是 `customer-prepare.yml` / `customer-install.yml`。下文保留 RHDP 专用操作流程。**
+
 **日常部署入口是 `ansible/dify.yml`，部署命令使用 `ansible-playbook`。** Ansible 负责主机连接、阶段顺序、制品传输、服务恢复和验收；`scripts/offline.py` 是内部调用的镜像/Helm 执行引擎，仍保留给底层维护与手动适配使用。迁移编排入口不意味着删除 Python 运行时。
 
 原先本页的 Python、证书、导入和安装命令已完整迁移至 [底层工具手动操作参考](disconnected-manual.md)。本页作为 Ansible 主指南，不再要求操作者逐条执行这些 Python 部署命令。
@@ -10,9 +12,10 @@
 |---|---|---|
 | RHDP OpenShift Disconnected Workshop 的既有离线集群 | `ansible/dify.yml` | 已验证部署、重启恢复和验收 |
 | 在该 Workshop 中创建离线 OpenShift | 私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation) 的 `ansible/cluster.yml` | 独立维护，不在本仓库创建集群 |
-| 任意客户离线 OpenShift、不同网络或对象存储拓扑 | [通用底层工具参考](disconnected-manual.md) | 尚未提供客户通用 Ansible Playbook；需要按现场适配与验证 |
+| 客户已有 amd64 OpenShift + RHEL9 单机 Podman / 本地 S3 | [客户 Quick Start](customer-quickstart.md) | 独立的客户 Ansible 入口；前置条件及验证边界见指南 |
+| 外部 S3、不同架构或其他拓扑 | [通用底层工具参考](disconnected-manual.md) | 仍需适配与验证 |
 
-**不能将目前的 RHDP Playbook 直接当作任意客户环境的通用 Ansible 安装器。** 它依赖 Workshop 的 Jump/Highside、集群就绪文件、AWS 身份及网络约定。通用交付引擎保留了客户侧能力，但这些客户拓扑没有随本次 RHDP 编排迁移一起实现通用 Ansible 自动化。
+**不能将目前的 RHDP Playbook 直接当作任意客户环境的通用 Ansible 安装器。** 它依赖 Workshop 的 Jump/Highside、集群就绪文件、AWS 身份及网络约定。客户单机拓扑使用独立的客户 Playbook，不读取这些 Workshop 文件。
 
 ## 2. 控制端和工程准备
 
@@ -99,4 +102,4 @@ ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","check"]}'
 
 Enterprise 离线 License、实际业务文件上传、插件构建、模型调用、RAG，以及第二套全新环境的完整 Ansible 链路仍未验收。Workshop 有 AWS/RHUI 等代理访问例外，并非物理隔离环境。
 
-客户使用其他 StorageClass、外部 S3、不同架构、插件 wheels 或预置模型时，参考 [底层工具手动操作参考](disconnected-manual.md)。此参考文档保留已有能力，但不表示客户通用 Ansible 迁移已经完成。
+客户的 StorageClass、域名、源认证及插件目录通过 [客户 Quick Start](customer-quickstart.md) 配置。外部 S3、不同架构及预置模型仍参考 [底层工具手动操作参考](disconnected-manual.md)，这些拓扑没有纳入客户 Quick Start 自动化。

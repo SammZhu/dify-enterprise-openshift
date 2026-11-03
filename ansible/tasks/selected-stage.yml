@@ -12,4 +12,8 @@
 
 - name: Enable boot recovery for the owned local services
   ansible.builtin.include_tasks: services-autostart.yml
+  vars:
+    dify_service_host: "{{ rhdp_highside_host }}"
+    dify_service_state: "{{ rhdp_settings.remoteDir }}/state"
+    dify_service_bundle: "{{ rhdp_settings.remoteDir }}/bundle"
   when: rhdp_selected_stage == 'services'

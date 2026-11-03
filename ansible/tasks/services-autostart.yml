@@ -1,7 +1,7 @@
 ---
 # The preceding services phase verifies every container's bundle ownership.
-- name: Manage only the Dify local-services boot unit on Highside
-  delegate_to: "{{ rhdp_highside_host }}"
+- name: Manage only the Dify local-services boot unit on the Podman host
+  delegate_to: "{{ dify_service_host }}"
   become: true
   block:
     - name: Check whether a boot unit already exists
@@ -31,7 +31,7 @@
     - name: Stage the dedicated boot unit with explicit mount dependencies
       ansible.builtin.template:
         src: "{{ playbook_dir }}/templates/dify-offline-services.service.j2"
-        dest: "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+        dest: "{{ dify_service_state }}/dify-offline-services.service"
         owner: root
         group: root
         mode: '0600'
@@ -41,12 +41,12 @@
         argv:
           - /usr/bin/systemd-analyze
           - verify
-          - "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+          - "{{ dify_service_state }}/dify-offline-services.service"
       changed_when: false
 
     - name: Install the validated boot unit
       ansible.builtin.copy:
-        src: "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+        src: "{{ dify_service_state }}/dify-offline-services.service"
         dest: /etc/systemd/system/dify-offline-services.service
         remote_src: true
         owner: root

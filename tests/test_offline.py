@@ -379,6 +379,29 @@ class RealChartTests(unittest.TestCase):
                     link = urlparse(target.strip("<>"))
                     if not link.scheme and link.path:
                         self.assertTrue((guide.parent / unquote(link.path)).exists(), (guide.name, target))
+            # Assemble the actual customer controller into the real-chart media,
+            # with only the network pip boundary mocked. Verify tar/checksum closure.
+            from test_customer_delivery import c, params
+            customer = c.CustomerWorkflow('prepare', params(td))
+            customer.bundle = bundle
+            with patch.object(customer, 'call'):
+                customer.controller()
+            offline.verify(bundle)
+            customer.package()
+            report = json.loads((customer.root / 'media-ready.json').read_text())
+            self.assertEqual(offline.sha(Path(report['archive'])), report['sha256'])
+            with tarfile.open(report['archive']) as media:
+                names = media.getnames()
+                self.assertIn('bundle/ansible/customer-install.yml', names)
+                self.assertIn('bundle/docs/customer-quickstart.md', names)
+                self.assertFalse(any('auth.json' in n or 'inventory.local' in n for n in names))
+            playbook = Path(sys.executable).parent / 'ansible-playbook'
+            for entry in ('customer-install.yml',):
+                result = subprocess.run([str(playbook), '-i', 'localhost,', entry, '--check'],
+                    cwd=bundle / 'ansible', capture_output=True, text=True,
+                    env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(td / 'ansible-local'),
+                             ANSIBLE_REMOTE_TEMP=str(td / 'ansible-remote')))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             ca = td / "ca.crt"; ca.write_text("test-ca")
             auth = td / "auth.json"
             auth.write_text(json.dumps({"auths": {self.cfg["offline"]["registry"]: {"auth": "dGVzdDp0ZXN0"}}}))

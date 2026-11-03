@@ -1,0 +1,10 @@
+---
+# Copy outside the sealed bundle. Use absolute paths.
+customer_bundle_dir: /opt/dify-media/bundle
+customer_state_root: /var/lib/dify-offline
+customer_kubeconfig: /root/dify-private/kubeconfig
+customer_context: customer-admin
+# Optional: provide all three TLS files; otherwise a private CA is generated.
+# customer_tls_cert: /root/dify-private/server.crt
+# customer_tls_key: /root/dify-private/server.key
+# customer_tls_ca: /root/dify-private/ca.crt
