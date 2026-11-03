@@ -202,7 +202,7 @@ exec sudo -n /usr/bin/podman --cgroup-manager=cgroupfs "$@"
         staging.mkdir(exist_ok=True, mode=0o700)
         target = staging / 'ansible'; target.mkdir(exist_ok=True)
         public = ['ansible.cfg', 'requirements.txt', 'customer-install.yml',
-                  'customer-defaults.yml', 'customer-install.example.yml']
+                  'customer-defaults.yml', 'customer-install.example.yml', 'customer-reset.yml']
         for directory in ('library', 'module_utils', 'tasks', 'templates'):
             public += [str(p.relative_to(common.ROOT / 'ansible')) for p in (common.ROOT / 'ansible' / directory).rglob('*')
                        if p.is_file() and p.suffix in ('.py', '.yml', '.j2') and '__pycache__' not in p.parts and '.local.' not in p.name]
@@ -221,6 +221,7 @@ exec sudo -n /usr/bin/podman --cgroup-manager=cgroupfs "$@"
             '# Dify Enterprise 3.9.8 customer offline media\n\n'
             'Continue with steps 3–5 of [Customer Quick Start](docs/customer-quickstart.md).\n'
             'Run `ansible/customer-install.yml`; keep this sealed bundle unchanged.\n'
+            'For reset/reinstall see [Reset guide](docs/disconnected-reset.md) and `ansible/customer-reset.yml`.\n'
             'OS packages and Python 3.12 must be installed before offline bootstrap.\n')
         common.private(self.bundle / 'customer-media.json', {'format': 1, 'difyVersion': '3.9.8', 'ocpVersion': self.params['ocp_version'],
                        'platform': 'linux/amd64', 'hostOS': 'RHEL9', 'controllerPython': '3.12'})

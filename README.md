@@ -1,10 +1,22 @@
 # Dify Enterprise on OpenShift
 
-GitOps content for running **Dify Enterprise v3.9.8** on **OpenShift 4.20 / 4.21**,
-built to drop straight into a Red Hat Demo Platform
-[Field Sourced Content](https://github.com/rhpds/field-sourced-content-template) order.
+Deployment resources and Ansible automation for **Dify Enterprise on OpenShift**,
+covering customer environments and Red Hat Demo Platform (RHDP) demonstrations.
+The repository includes online GitOps deployment and disconnected deployment
+using a standalone Podman host, local Helm charts and offline media.
 
-**Status: verified end to end.** All 16 Dify components run, plugins build
+Customers can start with the [offline Quick Start](docs/customer-quickstart.md). For repeatable installation exercises, see the [Ansible reset and reinstall guide](docs/disconnected-reset.md).
+RHDP [Field Sourced Content](https://github.com/rhpds/field-sourced-content-template)
+is one deployment scenario; Demo cluster provisioning is maintained separately in
+[rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation).
+
+Version coverage is recorded per workflow and expands as additional versions are
+adapted and validated. The current offline profile targets Dify Enterprise 3.9.8
+and OpenShift 4.20/4.21; actual deployment/restart validation is recorded for
+OpenShift 4.20.8. See the [offline validation scope](docs/customer-quickstart.md#当前验证边界)
+before treating a version or customer topology as validated.
+
+**Online GitOps demonstration status: verified end to end.** All 16 Dify components run, plugins build
 in-cluster and push to the internal registry, and the complete cluster-level
 requirement is *one CRD, installed once*. No component runs `privileged` and
 nobody needs SCC administration — see

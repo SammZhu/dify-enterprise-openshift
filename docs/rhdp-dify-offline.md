@@ -144,3 +144,7 @@ RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工�
 - 再次执行 services 能识别并更新本工程已有单元，退出码为 0，三个容器的 StartedAt 均未改变，没有无故重启服务。
 
 31 项本地测试及 Ansible 语法/计划检查通过。上述证明的是当前 Workshop 的恢复和部署验收，仍不包含新建第二套环境的完整 Ansible 链路、License 激活、业务文件上传、插件、模型或 RAG 验证。
+
+## 清理后重新验证
+
+在 Highside 使用 `customer-reset.yml` 可预览应用/完整重置，按 [清理指南中的 RHDP 配置和步骤](disconnected-reset.md) 运行；它接受原 Highside 安装绑定。清理成功后回到 Jump，通过原 `dify.yml` 的 services/import/install/check 阶段恢复并验收。不会删除 Workshop 原有 mirror-registry 或集群级共享资源；本轮未执行真实破坏性清理。

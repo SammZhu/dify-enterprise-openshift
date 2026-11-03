@@ -61,3 +61,14 @@ RHDP 自动化入口见 [Ansible 主安装指南](disconnected-install.md)；客
 - [ ] 记录证书/认证/License 到期日期及续期职责。
 
 最终结论填写“通过 / 部分通过 / 不通过”，逐项记录失败证据与处理人。未完成的 License、插件或 RAG 项不能以“Pod Running”代替。
+
+## 清理与重装验证
+
+操作入口见 [Ansible 清理与重装](disconnected-reset.md)。以下现场项须单独记录，不能用模拟测试代替：
+
+- [ ] 预览只读，目标身份和数据范围正确；外来资源、错误确认值和身份变化被拒绝。
+- [ ] 应用重置后命名空间消失、旧 PVC 删除、专用 S3 数据清空，Registry/认证保留。
+- [ ] 完整重置后本项目三个容器、专用 unit 和 Registry 数据清空，原 mirror-registry/集群共享资源保留。
+- [ ] PV 的 Delete/Retain 策略和后续存储回收状态已记录。
+- [ ] 失败后按原 run ID 续跑；旧计划不能清理新建命名空间。
+- [ ] 重装重新生成部署验收报告，数据层和 TLS S3/HTTPS 检查通过；License/业务功能另验。

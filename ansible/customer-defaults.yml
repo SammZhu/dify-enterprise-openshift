@@ -23,3 +23,9 @@ customer_tls_ca: ''
 customer_phase_timeout: 28800
 customer_prepare_stages: [preflight, tools, export, controller, package]
 customer_install_stages: [preflight, verify, services, import, install, check]
+# Cleanup previews unless execution and the exact plan hash are both supplied.
+customer_reset_mode: application
+customer_reset_execute: false
+customer_reset_confirm: ''
+customer_reset_run_id: ''
+customer_reset_resume: false
