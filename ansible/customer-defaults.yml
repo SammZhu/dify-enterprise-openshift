@@ -29,3 +29,4 @@ customer_reset_execute: false
 customer_reset_confirm: ''
 customer_reset_run_id: ''
 customer_reset_resume: false
+rhdp_reset_context: ''

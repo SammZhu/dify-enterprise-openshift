@@ -193,7 +193,7 @@ class Workflow:
                 info = json.loads(self.call(["podman", "inspect", name], "services", capture=True))[0]
                 if info.get("Config", {}).get("Labels", {}).get("io.dify.offline.bundle") != owner:
                     raise ValueError("unmanaged Podman service; refusing to take over")
-            self.call(["podman", "start", *names], "services")
+            self.call(["podman", "start", "dify-offline-s3", "dify-offline-registry", "dify-offline-pypi"], "services")
         else:
             self.call(["bash", self.bundle / "source/scripts/start-offline-services.sh", self.bundle, self.state,
                        certs / "server.crt", certs / "server.key", self.state / "htpasswd"], "services")

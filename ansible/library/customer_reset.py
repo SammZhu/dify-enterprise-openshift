@@ -18,7 +18,7 @@ def main():
     try:
         os.umask(0o077)
         if p['action'] in ('acquire', 'release'):
-            root = reset.delivery.root_path('install', p['config'])
+            root = reset.delivery.root_path('install', p['config'], allow_nested_bundle=True)
             changed = False if m.check_mode else runtime.lease(root, p['action'], p['run_id'])
             m.exit_json(changed=changed)
         r = reset.Reset(p['config'], p['mode'], p['run_id'])

@@ -1,0 +1,8 @@
+---
+# 在 Jump 复制到源码之外的私有配置文件；填写真实 context。
+# 使用既有 highside SSH 别名、免密 sudo 和原 Highside Python/PyYAML。
+rhdp_dify_remote_dir: /mnt/high-side-data/dify-bootstrap
+rhdp_cluster_remote_dir: /mnt/high-side-data/rhdp-bootstrap
+rhdp_reset_context: ''
+customer_reset_mode: application
+customer_reset_run_id: dify-reset-rhdp-001

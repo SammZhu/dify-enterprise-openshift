@@ -72,7 +72,8 @@ class ResetTests(unittest.TestCase):
     def test_foreign_objects_and_unrelated_generated_children_block_namespace_deletion(self):
         expected={('', 'Deployment', 'dify-api')}
         owned=obj('Deployment','dify-api',labels={'demo.redhat.com/application':'dify-enterprise'})
-        objects=[owned,obj('ReplicaSet','dify-api-rs',owner=owned['metadata']['uid']),
+        alias=copy.deepcopy(owned); alias['apiVersion']='legacy.fixture/v1'
+        objects=[owned,alias,obj('ReplicaSet','dify-api-rs',owner=owned['metadata']['uid']),
                  obj('Pod','dify-api-pod',owner='dify-api-rs'),obj('ConfigMap','foreign'),
                  obj('Pod','foreign-pod',owner='foreign-deployment'),obj('ConfigMap','kube-root-ca.crt')]
         self.assertEqual(r.classify(objects,expected,set()),['ConfigMap/foreign','Pod/foreign-pod'])
@@ -112,6 +113,8 @@ class ResetTests(unittest.TestCase):
             self.assertTrue((f.bundle/'config.yaml').exists()); self.assertFalse((f.root/'deployment-ready.json').exists())
             report=json.loads((f.root/'reset-report.json').read_text()); self.assertEqual(report['volumes'][0]['reclaimPolicy'],'Retain')
             self.assertFalse(report['registryDataReset']); self.assertFalse(f.execute('finish'))
+            start=[c[1] for c in f.commands if c[0]=='podman' and c[1][0]=='start']
+            self.assertEqual(start,[('start',plan['containers']['dify-offline-s3'],plan['containers']['dify-offline-pypi'])])
 
     def test_full_reset_removes_only_owned_services_and_two_data_directories(self):
         with tempfile.TemporaryDirectory() as td:
@@ -215,6 +218,9 @@ class ResetTests(unittest.TestCase):
                 return json.dumps([{'Mounts':[{'Type':'bind','Source':str(f.state/'s3-data')}]}])
             with patch.object(f,'podman',side_effect=call):
                 with self.assertRaisesRegex(ValueError,'shares'):r.Reset.shared_mount_guard(f,plan)
+            renamed=[{'Id':next(iter(plan['containers'].values())),'Names':['renamed']} ]
+            with patch.object(f,'podman',return_value=json.dumps(renamed)):
+                with self.assertRaisesRegex(ValueError,'renamed'):r.Reset.shared_mount_guard(f,plan)
             self.assertTrue(all(c[0]=='oc' and c[1][0]=='get' for c in f.commands))
 
     def test_loading_media_source_never_adds_bytecode_or_changes_global_bytecode_policy(self):
@@ -234,7 +240,9 @@ class NativeResetPreviewTests(unittest.TestCase):
         import subprocess
         import sys
         with tempfile.TemporaryDirectory() as td:
-            base=Path(td).resolve(); p=params(base); prep=r.delivery.CustomerWorkflow('prepare',p)
+            base=Path(td).resolve(); p=params(base)
+            p.update(state_root=str(base/'highside'),bundle_dir=str(base/'highside/bundle'))
+            prep=r.delivery.CustomerWorkflow('prepare',p)
             bundle=Path(p['bundle_dir']); (bundle/'source/scripts').mkdir(parents=True)
             shutil.copy2(ROOT/'scripts/offline.py',bundle/'source/scripts/offline.py')
             shutil.copytree(ROOT/'examples',bundle/'source/examples')
@@ -249,7 +257,9 @@ class NativeResetPreviewTests(unittest.TestCase):
             Path(p['kubeconfig']).touch()
             binding={'clusterID':'fixture-cluster','context':p['context'], 'configSHA256':r.delivery.digest(bundle/'config.yaml'),
                      'imagesSHA256':r.delivery.digest(bundle/'images.lock.yaml')}
-            (state/'customer-binding.json').write_text(json.dumps(binding))
+            (state/'binding.json').write_text(json.dumps({'identity':{'clusterID':'fixture-cluster',
+                'domain':prep.config()['deployer']['domain'],'highside':{'hostname':p['registry_host']}},
+                'settings':{'remoteDir':str(state)}}))
             config=base/'install.yml'; config.write_text(r.common.offline.yaml.safe_dump({
                 'customer_bundle_dir':str(bundle),'customer_state_root':str(state),
                 'customer_kubeconfig':p['kubeconfig'],'customer_context':p['context']}))
@@ -293,6 +303,19 @@ else:
                 result=subprocess.run(command+extra,cwd=ROOT/'ansible',env=env,text=True,capture_output=True)
                 self.assertEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertIn('changed=0',result.stdout)
+            # The RHDP wrapper uses the existing Jump controller/Highside interpreter.
+            # Use a local inventory stand-in to prove it calls the same read-only plan.
+            cluster=base/'cluster-state'; (cluster/'cluster/auth').mkdir(parents=True)
+            (cluster/'cluster/auth/kubeconfig').touch()
+            inventory=base/'inventory.yml'; inventory.write_text(r.common.offline.yaml.safe_dump({'all':{'children':{
+                'highside':{'hosts':{'fixture_highside':{'ansible_connection':'local','ansible_python_interpreter':sys.executable}}}}}}))
+            rhdp_vars=base/'rhdp.yml'; rhdp_vars.write_text(r.common.offline.yaml.safe_dump({
+                'rhdp_dify_remote_dir':str(state),'rhdp_cluster_remote_dir':str(cluster),
+                'rhdp_reset_context':p['context'],'ansible_become':False,'customer_reset_execute':True}))
+            result=subprocess.run([str(playbook),'-i',str(inventory),'rhdp-reset.yml','-e','@'+str(rhdp_vars),'--check'],
+                cwd=ROOT/'ansible',env=env,text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('changed=0',result.stdout)
             after={str(f.relative_to(state)):f.read_bytes() for f in state.rglob('*') if f.is_file()}
             self.assertEqual(before,after); self.assertFalse((state/'reset-runs').exists());self.assertFalse((state/'.ansible-run').exists())
             r.common.offline.verify(bundle)

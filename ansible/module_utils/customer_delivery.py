@@ -19,7 +19,7 @@ PREPARE_STAGES = ('preflight', 'tools', 'export', 'controller', 'package')
 INSTALL_STAGES = ('preflight', 'verify', 'services', 'import', 'install', 'check')
 
 
-def root_path(mode, params):
+def root_path(mode, params, allow_nested_bundle=False):
     name = 'media_root' if mode == 'prepare' else 'state_root'
     raw = params[name]
     if not raw or not re.fullmatch(r'/[A-Za-z0-9_./-]+', raw) or '..' in Path(raw).parts or not Path(raw).is_absolute(): raise ValueError(name + ' must be absolute')
@@ -35,7 +35,8 @@ def root_path(mode, params):
     if mode == 'install' and not re.fullmatch(r'/[A-Za-z0-9_./-]+', params['bundle_dir']):
         raise ValueError('bundle_dir must be an absolute path without whitespace')
     if mode == 'install' and (root.is_relative_to(Path(params['bundle_dir']).resolve())
-                              or Path(params['bundle_dir']).resolve().is_relative_to(root)):
+                              or (Path(params['bundle_dir']).resolve().is_relative_to(root)
+                                  and not (allow_nested_bundle and Path(params['bundle_dir']).resolve() == root / 'bundle'))):
         raise ValueError('private state must be outside the sealed bundle')
     return root
 

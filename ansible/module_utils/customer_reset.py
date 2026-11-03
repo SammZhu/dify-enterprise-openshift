@@ -90,6 +90,9 @@ def classify(objects, expected, pvc_names):
                      or (kind == 'PersistentVolumeClaim' and name in pvc_names))
         if system or manifest_owned or generated: owned.add(m['uid'])
         else: pending.append(item)
+    # An API alias may expose the same object through multiple groups/versions.
+    # A UID already proven through its canonical manifest is the same object.
+    pending = [i for i in pending if i['metadata']['uid'] not in owned]
     while True:
         children = [i for i in pending if any(ref['uid'] in owned for ref in i['metadata'].get('ownerReferences', []))]
         if not children: break
@@ -103,7 +106,7 @@ class Reset:
         if mode not in ('application', 'full'): raise ValueError('unsupported reset mode')
         if not re.fullmatch(r'[A-Za-z0-9-]{12,80}', run_id): raise ValueError('invalid reset run id')
         self.p, self.mode, self.run_id = params, mode, run_id
-        self.root = delivery.root_path('install', params)
+        self.root = delivery.root_path('install', params, allow_nested_bundle=True)
         if Path(params['state_root']).is_symlink() or not self.root.is_dir(): raise ValueError('existing private state required')
         self.bundle = Path(params['bundle_dir']).resolve(); self.state = self.root / 'state'
         if self.state.is_symlink(): raise ValueError('symlinked state is not supported')
@@ -217,7 +220,12 @@ class Reset:
     def shared_mount_guard(self, plan):
         # Also runs in preview, before deletion or service stops.
         for other in json.loads(self.podman('ps', '-a', '--format', 'json')):
-            if other['Id'] in plan['containers'].values(): continue
+            if other['Id'] in plan['containers'].values():
+                expected = next(n for n, uid in plan['containers'].items() if uid == other['Id'])
+                names = other.get('Names', [])
+                if isinstance(names, str): names = [names]
+                if expected not in [n.lstrip('/') for n in names]: raise ValueError('owned container was renamed')
+                continue
             info = json.loads(self.podman('inspect', other['Id']))[0]
             for mount in info.get('Mounts', []):
                 if mount.get('Type') == 'bind' and any(Path(mount['Source']).resolve().is_relative_to(Path(d['path']))
@@ -299,7 +307,9 @@ class Reset:
             if stop: self.podman('stop', '--time=30', *stop)
             if self.mode == 'full' and ids: self.podman('rm', *ids.values())
             for record in plan['directories'].values(): clear_directory(record)
-            if self.mode == 'application': self.podman('start', *stop)
+            if self.mode == 'application':
+                # nginx resolves the S3 upstream at startup: restore S3 first.
+                self.podman('start', ids['dify-offline-s3'], ids['dify-offline-pypi'])
         elif action == 'finish':
             if self.namespace(): raise ValueError('namespace unexpectedly exists')
             if self.mode == 'full' and (self.containers() or UNIT.exists()): raise ValueError('full reset host cleanup incomplete')

@@ -1,6 +1,6 @@
 # 清理 Dify 并重新验证离线安装
 
-入口是 **`ansible/customer-reset.yml`**，在离线 Podman 主机以 root 运行。默认只连接现场读取清理计划，**不会删除资源**；只有显式启用执行并提供该计划的确认 hash 才会清理。新制介质会携带此入口。
+客户入口是 **`ansible/customer-reset.yml`**，在离线 Podman 主机以 root 运行；RHDP 使用 **`ansible/rhdp-reset.yml`**，在已有 Jump 控制端通过 SSH 管理 Highside。默认只连接现场读取清理计划，**不会删除资源**；只有显式启用执行并提供该计划的确认 hash 才会清理。新制介质会携带此入口；获取新版入口时应使用新的 `customer_media_root` 制包，旧工作目录的完成标记不会自动升级原封包。
 
 本入口适用于本工程已有的 `dify` / 本地 S3 专用安装，接受客户入口的 `customer-binding.json` 或 RHDP Highside 的既有 `binding.json`。它不创建集群，不清理共享/外部 S3，也不接管无安装绑定或无匹配安装标记的未知安装。**命名空间与三个本地服务必须专供本项目使用**；应用模式会清空该本地 S3 服务的整个数据目录，而不只是某个对象前缀。
 
@@ -17,7 +17,7 @@
 
 ## 2. 准备目标配置
 
-使用已安装 Ansible 的 Python 3.12 环境，前提同 [客户 Quick Start](customer-quickstart.md)。目标集群可达、具有 cluster-admin 权限，本地三个服务及其数据目录仍属于当前安装。
+客户本地入口使用已安装 Ansible 的 Python 3.12 环境，前提同 [客户 Quick Start](customer-quickstart.md)；RHDP 使用下述 Jump 控制端。目标集群可达、具有 cluster-admin 权限，三个服务及其数据目录仍属于当前安装。
 
 - 新介质：进入 `/opt/dify-media/bundle/ansible`。
 - 旧介质：不要修改已封包的 `bundle`。将包含清理入口的新版公开源码放到 `/opt/dify-enterprise-openshift`，从其 `ansible/` 目录运行，配置仍指向原来的介质与私有状态。旧包不会自动获得新 Playbook。
@@ -31,25 +31,51 @@ customer_kubeconfig: /root/dify-private/kubeconfig
 customer_context: customer-admin  # 客户确认过的实际 context
 ```
 
-对于原 RHDP 安装，在 **Highside 本地**使用新版公开源码与 Ansible，另存 `/root/dify-private/reset-rhdp.yml`：
+### RHDP：继续使用 Jump 控制端
 
-```yaml
-customer_bundle_dir: /mnt/high-side-data/dify-bootstrap/bundle
-customer_state_root: /mnt/high-side-data/dify-bootstrap
-customer_kubeconfig: /mnt/high-side-data/rhdp-bootstrap/cluster/auth/kubeconfig
-customer_context: 实际context名称
-```
-
-通过下面命令读取该 kubeconfig 的 context，并确认目标后填写，不依赖终端的默认 context：
+在 **Jump 的新版完整源码 `ansible/` 目录**执行，不在 Highside 安装 Ansible。控制端使用既有 Python 3.12 venv；Highside 使用既有 `/usr/bin/python3`（3.9+）、PyYAML 和免密 sudo。默认 inventory 沿用 Workshop 的 `highside` SSH 别名；可通过 `-i /私有路径/inventory.yml` 覆盖，但应保持一个 Highside 目标。
 
 ```bash
-/mnt/high-side-data/dify-bootstrap/bundle/bin/oc \
-  --kubeconfig /mnt/high-side-data/rhdp-bootstrap/cluster/auth/kubeconfig config get-contexts
+install -d -m 0700 /mnt/low-side-data/dify-private
+cp rhdp-reset.example.yml /mnt/low-side-data/dify-private/reset-rhdp.yml
+chmod 0600 /mnt/low-side-data/dify-private/reset-rhdp.yml
 ```
 
-以下命令以客户 `install.yml` 为例；RHDP 换为 `reset-rhdp.yml`。私有配置文件设为 0600、放在工程之外。不要对 Jump 的联网制作目录执行清理。
+编辑这份 Jump 本地配置，路径是 **Highside 上的目标路径**：
 
-## 3. 预览并执行应用重置
+```yaml
+rhdp_dify_remote_dir: /mnt/high-side-data/dify-bootstrap
+rhdp_cluster_remote_dir: /mnt/high-side-data/rhdp-bootstrap
+rhdp_reset_context: 实际context名称
+customer_reset_mode: application
+customer_reset_run_id: dify-reset-rhdp-001
+```
+
+先读取指定 kubeconfig 的 context，再确认并填写，不依赖终端默认 context：
+
+```bash
+ssh highside '/mnt/high-side-data/dify-bootstrap/bundle/bin/oc --kubeconfig /mnt/high-side-data/rhdp-bootstrap/cluster/auth/kubeconfig config get-contexts'
+```
+
+在 Jump 预览：
+
+```bash
+/mnt/low-side-data/ansible-venv/bin/ansible-playbook rhdp-reset.yml \
+  -e @/mnt/low-side-data/dify-private/reset-rhdp.yml --check
+```
+
+按第 3 步的核对要求审阅输出，复制 `confirmation` 后执行：
+
+```bash
+/mnt/low-side-data/ansible-venv/bin/ansible-playbook rhdp-reset.yml \
+  -e @/mnt/low-side-data/dify-private/reset-rhdp.yml \
+  -e customer_reset_execute=true \
+  -e customer_reset_confirm=替换为预览输出的64位confirmation值
+```
+
+两种入口调用同一组清理任务和归属检查。RHDP 接受原 Highside 绑定，不会清理 Jump 的联网制作目录。RHDP 清理/续跑/重装均在 Jump 控制，客户独立安装则在离线 Podman 主机本地执行。
+
+## 3. 客户本地入口：预览并执行应用重置
 
 在上述选定的 `ansible/` 目录执行。为本次操作选择唯一 run ID（12–80 个字母、数字或连字符），示例为 `dify-reset-lab-001`：
 
@@ -77,7 +103,7 @@ customer_context: 实际context名称
 
 ## 4. 完整重置
 
-第 3 步的**预览和执行两条命令**均改用：
+客户第 3 步和 RHDP 上述操作的**预览、执行两条命令**均改用：
 
 ```text
 customer_reset_mode=full
@@ -88,7 +114,7 @@ customer_reset_run_id=dify-reset-full-001
 
 ## 5. 重新安装和验收
 
-成功后查看 `customer_state_root/reset-report.json`。这是清理报告，不是安装成功报告；原 `deployment-ready.json` 会删除。
+成功后查看私有状态目录中的 `reset-report.json`（客户为 `customer_state_root`；RHDP 为 Highside 上的 `rhdp_dify_remote_dir`）。这是清理报告，不是安装成功报告；原 `deployment-ready.json` 会删除。
 
 客户入口：
 

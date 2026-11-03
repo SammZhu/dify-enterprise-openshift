@@ -147,4 +147,4 @@ RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工�
 
 ## 清理后重新验证
 
-在 Highside 使用 `customer-reset.yml` 可预览应用/完整重置，按 [清理指南中的 RHDP 配置和步骤](disconnected-reset.md) 运行；它接受原 Highside 安装绑定。清理成功后回到 Jump，通过原 `dify.yml` 的 services/import/install/check 阶段恢复并验收。不会删除 Workshop 原有 mirror-registry 或集群级共享资源；本轮未执行真实破坏性清理。
+在 Jump 使用 `rhdp-reset.yml` 通过原 SSH 配置管理 Highside，可预览应用/完整重置，按 [清理指南中的 RHDP 配置和步骤](disconnected-reset.md) 运行；它接受原 Highside 安装绑定，不要求在 Highside 安装 Ansible 控制端。清理成功后仍在 Jump，通过原 `dify.yml` 的 services/import/install/check 阶段恢复并验收。不会删除 Workshop 原有 mirror-registry 或集群级共享资源；本轮未执行真实破坏性清理。
