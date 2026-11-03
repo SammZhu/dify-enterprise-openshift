@@ -192,7 +192,7 @@ chmod 600 "$STATE/auth.json"
 
 Registry 未带认证时返回 `401` 是正常的 TLS 连通结果；wheel 索引应返回 HTML。进一步用 `curl --user offline` 交互认证确认 `/v2/` 返回 200。Registry 需要认证；wheel 索引提供内网只读下载，不启用匿名写入。
 
-服务脚本只加载包内的 Registry/nginx 镜像，不在线拉取。若同名容器已经存在，它会停止并提示检查，**不会删除已有 Registry 或存储**。重启现有服务用 `podman start dify-offline-registry dify-offline-pypi`。正式长期运行时由客户将容器纳入 Quadlet/systemd、证书续期和主机备份；`--restart` 本身不等同于已配置开机启动。
+服务脚本只加载包内的 Registry/nginx 镜像，不在线拉取。若同名容器已经存在，它会停止并提示检查，**不会删除已有 Registry 或存储**。重启现有服务用 `podman start dify-offline-registry dify-offline-pypi`。正式长期运行时由客户将容器纳入 Quadlet/systemd、证书续期和主机备份；`--restart` 本身不等同于已配置开机启动。RHDP Ansible 的 services 阶段会自动安装专属启动单元，详见 [主机重启恢复](rhdp-dify-offline.md#主机重启恢复)；通用 Shell 入口仍由客户配置相应的主机服务。
 
 wheel 服务端口从 `offline.pipMirror` 读取，可改成同一主机的 `https://<host>:9443/simple/`；必须与 Registry 端口及其他服务端口不同。目录中的公开 wheels 会设置为容器 nginx 用户可读，交付包外层和私有状态目录仍保留私有权限。
 

@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""Prepare on RHDP Jump, transfer, and install Dify into its disconnected SNO."""
-import argparse
+"""On-host Dify delivery operations invoked by Ansible phases."""
 import base64
 import contextlib
 import fcntl
-import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
-import platform
-import re
 import secrets
-import shlex
 import shutil
 import ssl
 import subprocess
@@ -127,6 +122,13 @@ class Workflow:
                         "localS3": {"enabled": True, "image": "docker.io/chrislusf/seaweedfs:4.51", "port": 9444, "bucket": "dify"}}}
         # Fixed compatibility overrides can be reviewed without including secrets.
         if self.s.get("valuesOverlay"): values = offline.merge(values, offline.read(self.s["valuesOverlay"]))
+        local = values["offline"].get("localS3", {})
+        if (values.get("namespace", "dify") != "dify" or values["deployer"]["domain"] != self.identity["domain"]
+                or values["offline"].get("platform", "linux/amd64") != "linux/amd64"
+                or values["offline"]["registry"] != host + ":5000"
+                or values["offline"]["pipMirror"] != "https://" + host + ":9443/simple/"
+                or local.get("enabled") is not True or local.get("port", 9444) != 9444):
+            raise ValueError("overlay changes the fixed RHDP topology; namespace/release dify is required; use offline.py for other supported architectures or service layouts")
         offline.write(self.root / "values.yaml", values)
         self.call([sys.executable, ROOT / "scripts/offline.py", "prepare", "--export", "--values", self.root / "values.yaml",
                    "--chart", self.root / "tools/dify-enterprise-3.9.8.tgz", "--tools", self.root / "tools/bin",
@@ -250,6 +252,12 @@ class Workflow:
         self.call(args, command)
 
     def check(self):
+        # A restarted cluster can be healthy while application Pods are warming
+        # up. Completed setup Jobs never become Ready and must be excluded.
+        namespace = offline.read(self.bundle / "config.yaml")["namespace"]
+        self.call([self.cluster / "payload/oc", "--kubeconfig", self.cluster / "cluster/auth/kubeconfig",
+                   "wait", "pods", "-n", namespace, "--field-selector=status.phase!=Succeeded,status.phase!=Failed",
+                   "--for=condition=Ready", "--timeout=600s"], "readiness")
         self.delivery("check")
         self.check_s3()
         router_ca = base64.b64decode(self.oc("get", "secret", "router-ca", "-n", "openshift-ingress-operator", "-o", "jsonpath={.data.tls\\.crt}"))

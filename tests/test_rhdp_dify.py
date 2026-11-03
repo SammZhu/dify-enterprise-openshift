@@ -1,4 +1,4 @@
-"""CLI boundaries; these tests do not connect to RHDP or provision resources."""
+"""Workshop profile and acceptance regressions; no RHDP resources are provisioned."""
 import json
 import base64
 import importlib.util
@@ -14,6 +14,34 @@ SCRIPT = Path(__file__).resolve().parents[1] / "ansible/module_utils/rhdp_dify.p
 
 
 class RhdpDifyTests(unittest.TestCase):
+    def test_overlay_cannot_change_fixed_workshop_topology_before_export(self):
+        spec = importlib.util.spec_from_file_location("rhdp_dify_profile", SCRIPT)
+        b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+        overrides = [{"namespace": "another"}, {"offline": {"platform": "linux/arm64"}},
+                     {"offline": {"registry": "another.fixture:5000"}},
+                     {"offline": {"pipMirror": "https://host.fixture:8443/simple/"}},
+                     {"offline": {"localS3": {"enabled": False}}},
+                     {"offline": {"localS3": {"port": 9445}}},
+                     {"deployer": {"domain": "another.fixture"}}]
+        for overlay in overrides:
+            with self.subTest(overlay=overlay), tempfile.TemporaryDirectory() as td:
+                root = Path(td); p = root / "overlay.json"; p.write_text(json.dumps(overlay))
+                w = b.Workflow({"workDir": td, "remoteDir": td, "clusterDir": td, "valuesOverlay": str(p)})
+                w.identity = {"highside": {"hostname": "host.fixture"}, "domain": "apps.fixture"}
+                with patch.object(w, "call") as exporter:
+                    with self.assertRaisesRegex(ValueError, "fixed RHDP topology"): w.prepare()
+                    exporter.assert_not_called()
+                self.assertFalse((root / "values.yaml").exists())
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); p = root / "overlay.json"
+            p.write_text(json.dumps({"offline": {"localS3": {"bucket": "dify-archive"}}}))
+            w = b.Workflow({"workDir": td, "remoteDir": td, "clusterDir": td, "valuesOverlay": str(p)})
+            w.identity = {"highside": {"hostname": "host.fixture"}, "domain": "apps.fixture"}
+            with patch.object(w, "call") as exporter:
+                w.prepare()
+                exporter.assert_called_once()
+            self.assertEqual(b.offline.read(root / "values.yaml")["offline"]["localS3"]["bucket"], "dify-archive")
+
     def test_s3_probe_needs_only_shell_and_aws_and_cleans_up_on_content_mismatch(self):
         sys.path.insert(0, str(SCRIPT.parent))
         try:

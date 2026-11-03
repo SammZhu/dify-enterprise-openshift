@@ -41,10 +41,10 @@ Sandbox 镜像的 UID/GID 超出默认 rootless 映射范围，包内 `bin/podma
 | prepare | 渲染真实 Chart、解析运行时镜像、导出 OCI 包并生成校验清单 |
 | transfer | rsync 源码、交付包和非秘密参数，离线侧完整复核 |
 | network | 仅允许当前集群节点安全组访问 Highside TCP 5000/9443/9444，不使用公网 CIDR，不更改出口策略 |
-| services | 在 Highside 生成私有 TLS/认证材料，启动本地 Registry、wheel 索引和 S3 |
+| services | 在 Highside 生成私有 TLS/认证材料，启动三个本地服务，并安装启用专属 systemd 开机单元 |
 | import | 只从 OCI 归档加载镜像，推到本地 Registry，以目标 digest 固定引用 |
 | install | 创建命名空间、SCC/RBAC、CRD、数据层和本地 Helm release，等待就绪 |
-| check | 检查 Pod/镜像、四个数据库、Redis、认证 TLS S3 读写删除和 HTTPS 入口 |
+| check | 最多等待 600 秒让运行 Pod 就绪，排除已完成/失败 Job，再检查镜像、数据库、Redis、TLS S3 和 HTTPS |
 
 联网侧只在 Jump 取材。Highside 不访问公共 Helm 仓库、容器仓库或 pip；CA 派生构建使用 `--network=none --pull=never`。本轮无插件 wheels，索引为空；插件依赖闭包及插件构建不属于已验收项。
 
@@ -68,7 +68,7 @@ Jump 默认状态 `/mnt/low-side-data/dify-bootstrap`；Highside 默认 `/mnt/hi
 
 首次导出中断后，当前版本会保留部分包并停止，要求查看 `logs/prepare.log` 后选择新的 `rhdp_dify_work_dir`；不要把部分包当完整交付物。成功封包后的 rsync 可续传，导入可以重复。参数或集群变化会拒绝复用原状态。
 
-参数见 `ansible/group_vars/all.yml`，客户覆盖文件放到仓库外并设置 0600，通过 `-e @/私有路径/profile.yml` 传入。保持参数不变才能复用原状态。可选择已具备前提的阶段，列表必须按原顺序：
+参数见 `ansible/group_vars/all.yml`，客户覆盖文件放到仓库外并设置 0600，通过 `-e @/私有路径/profile.yml` 传入。保持参数不变才能复用原状态。本 RHDP 入口固定使用集群实际 Ingress 域、linux/amd64、namespace/release dify、Highside Registry 5000 / wheels 9443 / 本地 S3 9444；覆盖文件不可关闭本地 S3 或改变这些拓扑参数，脚本会在导出前拒绝。其他受支持架构或外部 S3 可使用通用 offline.py 流程；通用入口也固定 namespace/release dify，其他命名空间需要另外适配和验证。可选择已具备前提的阶段，列表必须按原顺序：
 
 ```bash
 ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","tools","prepare"]}'
@@ -76,13 +76,30 @@ ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","tools","prepare"
 ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","check"]}'
 ```
 
-每次执行在两侧创建原子的 `.ansible-run/owner.json`，阻止另一 Playbook 接管，具体阶段仍有文件锁。正常完成/失败时释放本次租约；强制杀掉控制端可能残留租约，必须先检查异步任务、owner.json 和私有日志，确认没有仍在运行的任务后再人工处理，禁止自动抢锁。不要混用旧 Python 控制器。
+每次执行在两侧创建原子的 `.ansible-run/owner.json`，阻止另一 Playbook 接管，具体阶段仍有文件锁。正常完成/失败时释放本次租约；强制杀掉控制端、主机故障或 SSH 中断可能残留租约，必须先检查异步任务、owner.json 和私有日志，确认没有仍在运行的任务后再人工处理，禁止自动抢锁。不要混用旧 Python 控制器。
 
-含敏感中间结果的 Ansible 任务使用 no_log，不 fetch 私有文件；原始异常保留为目标主机 `logs/ansible-<phase>.log`，模块只返回阶段状态与必要的非秘密身份。
+含敏感中间结果的 Ansible 任务使用 no_log，不 fetch 私有文件；自定义模块的原始异常保留为目标主机 `logs/ansible-<phase>.log`，模块只返回阶段状态与必要的非秘密身份。
 
 真实 Podman 可能返回不带前缀的源 ID；Docker 转 OCI 时还可能改变 config 摘要。导出器将原始 ID 规范化存入 `sourceImageId`，从校验过的 OCI manifest/config 读取实际加载用的 `imageId`，两者不要求相同。本轮归档实测有 16/29 个转换后的 config ID 与源不同，已通过离线侧实际加载验证。
 
 成功后 Highside 生成私有 `deployment-ready.json`。报告区分部署验收和未提供 License、插件/模型/RAG 未测试，不能据此宣称完整业务验收通过。应用对外可见的地址、状态和日志见这个报告及状态目录，不把客户凭证写进文档。
+
+## 主机重启恢复
+
+`services` 阶段在校验三个容器的包身份后，部署 `/etc/systemd/system/dify-offline-services.service`。已存在但没有本工程标记的同名单元会被拒绝覆盖。模板先在私有 state 目录生成，并由 Highside 的 `systemd-analyze verify` 校验后安装。
+
+单元依赖网络和数据盘挂载，以固定的 `--cgroup-manager=cgroupfs` 启动已有的 Registry、wheel/S3 nginx 和 SeaweedFS 容器；不创建/替换容器，不读取源仓库凭证，也不接管 8443 的 rootless Quay。依赖方式见 [systemd RequiresMountsFor](https://www.freedesktop.org/software/systemd/man/devel/systemd.unit.html)。它负责开机启动，不是完整 HA 或持续健康监控。
+
+环境启动后先验收；旧安装尚未部署单元时，执行 services 阶段可补齐：
+
+```bash
+ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","services","check"]}'
+# 运行于 Highside；查看或有意停用本单元（下一次 services 会再次启用）
+sudo systemctl status dify-offline-services.service
+sudo systemctl disable --now dify-offline-services.service
+```
+
+`check` 会等待运行 Pod Ready，排除已经完成的凭证生成 Job；最终检查仍会拒绝失败 Pod，不因等待过滤而忽略实际失败。没有运行 services 的验收只检查当前状态，不会暗中启动容器。
 
 ## 实测记录
 
@@ -99,7 +116,7 @@ ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","check"]}'
 | 平台健康 | Node Ready，无内存/磁盘/PID Pressure；34/34 个 ClusterOperator 稳定 |
 | 私有材料 | `deployment-ready.json` 为 0600；认证、私钥、运行状态及原始日志保留在实验主机，不进入 Git |
 
-本次修复已写入脚本：从实际 OCI config 读取加载 ID、rootful Podman 与 cgroupfs、公共 wheel 内容的读取权限、同一包从未启动容器的安全恢复，以及 AWS CLI 镜像缺少 `cmp` 时的 S3 内容/长度校验。S3 探针使用 Pod UID 作为唯一对象名，并通过退出 trap 清理自己的对象；回归测试覆盖内容篡改、额外换行和失败清理。迁移后的 Dify 工程本地 30 项测试通过，包含真实 3.9.8 Chart 渲染及 Ansible 状态保护；原集群测试已移至独立仓库，测试均不创建 RHDP 资源。
+本次修复已写入脚本：从实际 OCI config 读取加载 ID、rootful Podman 与 cgroupfs、公共 wheel 内容的读取权限、同一包从未启动容器的安全恢复，以及 AWS CLI 镜像缺少 `cmp` 时的 S3 内容/长度校验。S3 探针使用 Pod UID 作为唯一对象名，并通过退出 trap 清理自己的对象；回归测试覆盖内容篡改、额外换行和失败清理。迁移后的 Dify 工程本地 31 项测试通过，包含真实 3.9.8 Chart 渲染及 Ansible 状态保护；原集群测试已移至独立仓库，测试均不创建 RHDP 资源。
 
 实测期间先修复原包中的 OCI ID 元数据并重校验归档，再继续导入；最终导出器会直接生成该元数据，但未另外重新导出全部镜像并新建第二套集群。首次 CA 分发曾造成短暂 `ErrImagePull`，在等待窗口内自动恢复，没有关闭 TLS 校验或重建集群。
 
@@ -107,6 +124,21 @@ ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","check"]}'
 
 ## Ansible 迁移复验
 
-语法检查、无变更计划和 30 项测试已通过。当前集群的 Ansible `preflight` + `check` 已成功，recap 为 failed=0 / unreachable=0，包含集群内认证 TLS S3 写读删除和 HTTPS 入口检查；状态 Playbook 的 check-mode 在空状态目录验证为只读。未把现有集群复验等同于完整的全新 Ansible 导出/导入/安装验证。
+语法检查、无变更计划和 31 项测试已通过。当前集群的 Ansible `preflight` + `check` 已成功，recap 为 failed=0 / unreachable=0，包含集群内认证 TLS S3 写读删除和 HTTPS 入口检查；状态 Playbook 的 check-mode 在空状态目录验证为只读。未把现有集群复验等同于完整的全新 Ansible 导出/导入/安装验证。
 
 Ansible 原生 transfer 已在当前 Workshop 成功复验：封包 rsync、Highside 完整校验和校验后标记均通过，复用既有目标制品；没有从空目标重新传输全部字节或创建第二套全新环境。
+
+## 2026-11-03 重启恢复复验
+
+RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工作目录仍存在；三个 rootful Dify 服务没有自动启动。第一次恢复后的检查还碰到应用 Pod 启动期暂态，因此补上了专属 systemd 单元和有界的 Pod 就绪等待。
+
+修复由 Ansible services 阶段安装并启用，随后对 Highside 做了一次真实受控重启。没有在重启后调用 services 来掩盖启动问题，只执行集群 `preflight + ready` 和 Dify `preflight + check`：
+
+- boot ID 已改变；专属单元 enabled/active，三个容器自动运行。
+- Registry、wheel TLS 入口返回 200；29 个已记录的目标镜像 manifest 均可按原 digest 访问。
+- 重启前的固定内容 S3 探针对象仍能读取并比对成功；新一轮集群内认证 TLS S3 写读删除通过。
+- 认证和 CA/私钥文件指纹不变；CA 与上次 import.yaml 记录一致，没有重建凭证。
+- 两个 Playbook 均 failed=0 / unreachable=0；运行租约已正常释放。
+- 再次执行 services 能识别并更新本工程已有单元，退出码为 0，三个容器的 StartedAt 均未改变，没有无故重启服务。
+
+31 项本地测试及 Ansible 语法/计划检查通过。上述证明的是当前 Workshop 的恢复和部署验收，仍不包含新建第二套环境的完整 Ansible 链路、License 激活、业务文件上传、插件、模型或 RAG 验证。
