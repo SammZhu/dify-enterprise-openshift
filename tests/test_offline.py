@@ -11,12 +11,14 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from urllib.parse import urlparse, unquote
 from unittest.mock import patch
 
 import yaml
@@ -369,6 +371,14 @@ class RealChartTests(unittest.TestCase):
             offline.prepare(args)
             lock = offline.verify(bundle)
             self.assertGreater(len(lock["images"]), 20)
+            # Offline operators must be able to follow the main guide into
+            # its manual/acceptance references without Internet access.
+            self.assertTrue((bundle / "docs/disconnected-manual.md").is_file())
+            for guide in (bundle / "docs").glob("*.md"):
+                for target in re.findall(r"\]\(([^)]+)\)", guide.read_text()):
+                    link = urlparse(target.strip("<>"))
+                    if not link.scheme and link.path:
+                        self.assertTrue((guide.parent / unquote(link.path)).exists(), (guide.name, target))
             ca = td / "ca.crt"; ca.write_text("test-ca")
             auth = td / "auth.json"
             auth.write_text(json.dumps({"auths": {self.cfg["offline"]["registry"]: {"auth": "dGVzdDp0ZXN0"}}}))

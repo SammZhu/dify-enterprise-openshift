@@ -101,7 +101,7 @@ For Dify deployment on an accepted workshop cluster, [the Dify Ansible playbook]
 
 An additional local installation path uses one Linux Podman host to provide a TLS container registry and Python wheel index. It carries local Helm charts, source, OCI image archives, approved plugins and optional model files into an existing disconnected OpenShift cluster, without ArgoCD or a Git server.
 
-See [the installation guide (Chinese)](docs/disconnected-install.md) and [acceptance checklist](docs/disconnected-validation.md). Start from `examples/helm/values-disconnected.yaml` and `scripts/offline.py --help`. This path has real-chart rendering and mocked export/import/install tests; a real disconnected cluster, offline License activation and approved plugins still need end-to-end acceptance. The online Demo procedure below remains the default.
+Start with the [Ansible installation guide (Chinese)](docs/disconnected-install.md): the deployment entry is `ansible/dify.yml`. The [manual engine reference](docs/disconnected-manual.md) retains Python commands for customer-specific adaptation and troubleshooting; a customer-generic Ansible playbook is not yet implemented. The [acceptance checklist](docs/disconnected-validation.md) distinguishes verified Workshop deployment/restart checks from unverified License, plugin, model and RAG functions. The online Demo procedure below remains available.
 
 ### Online Demo / GitOps
 

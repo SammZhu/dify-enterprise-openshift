@@ -1,5 +1,7 @@
 # 离线安装验收记录
 
+RHDP 自动化入口见 [Ansible 主安装指南](disconnected-install.md)；客户通用底层操作见 [手动工具参考](disconnected-manual.md)。
+
 用本清单为每个客户/交付包保留独立记录。脚本测试通过不代表下面的现场项目已通过。
 
 | 项目 | 现场记录 |
@@ -15,7 +17,7 @@
 ## 前提和制品
 
 - [ ] 核对源码、Chart、镜像访问授权、来源与校验值。
-- [ ] `offline.py verify` 接受 exported 包，拒绝 planned 或损坏包。
+- [ ] Ansible transfer 阶段的目标校验（或底层工具 verify）接受 exported 包，拒绝 planned 或损坏包。
 - [ ] 集群节点、Podman 主机与全部所需镜像架构一致。
 - [ ] 集群节点、构建 Pod、运维主机均能解析真实 Registry DNS。
 - [ ] Registry TLS、账号认证、持久化目录和 wheel 索引可用。
@@ -30,7 +32,7 @@
 - [ ] 安装期间不访问 GitHub、公共 Helm 仓库或公共镜像仓库。
 - [ ] 未创建 ArgoCD Application 或新的 Operator Subscription/CatalogSource。
 - [ ] 原有 Registry CA 条目保留，集群仍能访问原有内部 Registry。
-- [ ] `offline.py check` 通过：Pod Ready、镜像内部化、四个数据库、Redis PONG。
+- [ ] Ansible check 阶段通过：运行 Pod Ready、镜像内部化、四个数据库、Redis PONG；RHDP 配置还验证 TLS S3 和 HTTPS。客户手动流程需分别完成底层检查与 S3/入口验收。
 - [ ] 六个 Dify Route 可用，浏览器端也没有必要公网依赖。
 
 ## 功能
