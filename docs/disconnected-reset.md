@@ -1,6 +1,8 @@
 # 清理 Dify 并重新验证离线安装
 
-客户入口是 **`ansible/customer-reset.yml`**，在离线 Podman 主机以 root 运行；RHDP 使用 **`ansible/rhdp-reset.yml`**，在已有 Jump 控制端通过 SSH 管理 Highside。默认只连接现场读取清理计划，**不会删除资源**；只有显式启用执行并提供该计划的确认 hash 才会清理。新制介质会携带此入口；获取新版入口时应使用新的 `customer_media_root` 制包，旧工作目录的完成标记不会自动升级原封包。
+**如果你正在 RHDP Demo 的 Jump 上操作，请使用 `rhdp-reset.yml`，从第 2 节开始。** `/opt/dify-media/bundle/ansible` 是客户独立安装的示例路径，不是 RHDP Jump 的目录，也不需要为清理在 Jump 创建它。
+
+客户独立安装使用 `customer-reset.yml`，在其离线 Podman 主机本地执行，步骤见第 3 节。两种入口默认只读取现场计划，显式启用执行并提供确认 hash 后才删除资源。
 
 本入口适用于本工程已有的 `dify` / 本地 S3 专用安装，接受客户入口的 `customer-binding.json` 或 RHDP Highside 的既有 `binding.json`。它不创建集群，不清理共享/外部 S3，也不接管无安装绑定或无匹配安装标记的未知安装。**命名空间与三个本地服务必须专供本项目使用**；应用模式会清空该本地 S3 服务的整个数据目录，而不只是某个对象前缀。
 
@@ -15,33 +17,53 @@
 
 **业务数据会丢失。** 清理前完成需要的数据库、S3 和卷数据备份。计划会列出 PVC 对应的 PV 及回收策略：`Delete` 的存储回收由 CSI 异步处理；`Retain` 的 PV/底层存储仍保留，需要管理员另行处置。本入口不直接删除 PV，也不承诺物理介质安全擦除。
 
-## 2. 准备目标配置
+## 2. RHDP Demo：在 Jump 上操作
 
-客户本地入口使用已安装 Ansible 的 Python 3.12 环境，前提同 [客户 Quick Start](customer-quickstart.md)；RHDP 使用下述 Jump 控制端。目标集群可达、具有 cluster-admin 权限，三个服务及其数据目录仍属于当前安装。
+### 2.1 先分清源码和两侧目录
 
-- 新介质：进入 `/opt/dify-media/bundle/ansible`。
-- 旧介质：不要修改已封包的 `bundle`。将包含清理入口的新版公开源码放到 `/opt/dify-enterprise-openshift`，从其 `ansible/` 目录运行，配置仍指向原来的介质与私有状态。旧包不会自动获得新 Playbook。
+**工程源码**是包含 `ansible/`、`docs/` 等目录的本仓库文件；**离线交付包 `bundle/`** 是之前已制作并传到 Highside 的镜像、Chart 和工具。当前 RHDP 清理沿用 Highside 上已有的包，不需要先制作新的离线交付包。
 
-使用原 `/root/dify-private/install.yml`，最少包含：
+| 内容 | 所在主机 | 本 RHDP 安装的路径 / 获取方式 |
+|---|---|---|
+| 清理 Playbook 源码 | Jump | 进入已有新版源码的 `ansible/`；不知道源码位置或缺少入口时，按下一段下载到独立目录。 |
+| Ansible 控制端 | Jump | `/mnt/low-side-data/ansible-venv/bin/ansible-playbook`，是之前部署所用的运行环境。 |
+| 清理参数文件 | Jump | `/mnt/low-side-data/dify-private/reset-rhdp.yml`，下面的命令会创建目录并复制模板。 |
+| 已有离线交付包 | Highside | `/mnt/high-side-data/dify-bootstrap/bundle`，不在 Jump 上。 |
+| 已有集群状态和 kubeconfig | Highside | `/mnt/high-side-data/rhdp-bootstrap`，kubeconfig 在其 `cluster/auth/kubeconfig`。 |
 
-```yaml
-customer_bundle_dir: /opt/dify-media/bundle
-customer_state_root: /var/lib/dify-offline
-customer_kubeconfig: /root/dify-private/kubeconfig
-customer_context: customer-admin  # 客户确认过的实际 context
+如果 Jump 已有新版源码，进入其中的 `ansible/` 并确认有 `rhdp-reset.yml`。若不知道源码在哪里，或文件不存在，**直接在 Jump 下载一份独立源码**，不要求 Git，也不覆盖原安装目录：
+
+```bash
+DIFY_RESET_SOURCE=$(mktemp -d /mnt/low-side-data/dify-reset-source.XXXXXX)
+curl -fL \
+  https://github.com/SammZhu/dify-enterprise-openshift/archive/refs/heads/main.tar.gz \
+  -o "$DIFY_RESET_SOURCE/source.tar.gz"
+tar -xzf "$DIFY_RESET_SOURCE/source.tar.gz" \
+  -C "$DIFY_RESET_SOURCE" --strip-components=1
+cd "$DIFY_RESET_SOURCE/ansible"
+ls rhdp-reset.yml rhdp-reset.example.yml
 ```
 
-### RHDP：继续使用 Jump 控制端
+下面的 RHDP 命令都在这个 Jump shell 的 `ansible/` 目录执行。先检查已有运行环境和 Highside 目录：
+
+```bash
+ls /mnt/low-side-data/ansible-venv/bin/ansible-playbook
+ssh highside 'ls -d /mnt/high-side-data/dify-bootstrap/bundle /mnt/high-side-data/rhdp-bootstrap'
+```
+
+如果这些既有路径不存在，应核对原部署路径或确认该环境是否已完成 Dify 安装；不要创建空目录来代替安装包和集群状态。若原安装使用了其他路径，后面的配置也要按实际修改。
+
+### 2.2 配置目标并预览
 
 在 **Jump 的新版完整源码 `ansible/` 目录**执行，不在 Highside 安装 Ansible。控制端使用既有 Python 3.12 venv；Highside 使用既有 `/usr/bin/python3`（3.9+）、PyYAML 和免密 sudo。默认 inventory 沿用 Workshop 的 `highside` SSH 别名；可通过 `-i /私有路径/inventory.yml` 覆盖，但应保持一个 Highside 目标。
 
 ```bash
 install -d -m 0700 /mnt/low-side-data/dify-private
-cp rhdp-reset.example.yml /mnt/low-side-data/dify-private/reset-rhdp.yml
+cp -n rhdp-reset.example.yml /mnt/low-side-data/dify-private/reset-rhdp.yml
 chmod 0600 /mnt/low-side-data/dify-private/reset-rhdp.yml
 ```
 
-编辑这份 Jump 本地配置，路径是 **Highside 上的目标路径**：
+已有参数文件会保留；首次使用会复制模板。编辑并核对这份 Jump 本地配置，其中两个目录是 **Highside 上的目标路径**：
 
 ```yaml
 rhdp_dify_remote_dir: /mnt/high-side-data/dify-bootstrap
@@ -76,6 +98,23 @@ ssh highside '/mnt/high-side-data/dify-bootstrap/bundle/bin/oc --kubeconfig /mnt
 两种入口调用同一组清理任务和归属检查。RHDP 接受原 Highside 绑定，不会清理 Jump 的联网制作目录。RHDP 清理/续跑/重装均在 Jump 控制，客户独立安装则在离线 Podman 主机本地执行。
 
 ## 3. 客户本地入口：预览并执行应用重置
+
+客户本地入口使用已安装 Ansible 的 Python 3.12 环境，前提同 [客户 Quick Start](customer-quickstart.md)。目标集群可达、具有 cluster-admin 权限，三个服务及其数据目录仍属于当前安装。
+
+这里的 **离线交付包（`bundle/`）** 指包含 Chart、镜像归档、工具和校验清单的安装包，不是 GitHub 工程源码。`/opt/dify-media` 是 Quick Start 约定的示例解压位置；如果当时解压到了其他位置，应填写实际路径，而不是另建一个空目录。
+
+- 如果原包已有 `ansible/customer-reset.yml`，进入该包实际位置下的 `ansible/`。
+- 如果原包没有清理入口，保持原包不变，单独带入新版公开工程源码，在源码的 `ansible/` 目录运行；配置继续指向原来的包和私有状态。
+- 后续需要把清理入口加入交付包时，用新版代码和新的 `customer_media_root` 制包；旧工作目录的完成标记不会自动升级原包。为清理已安装环境，不需要重新下载镜像或制作整个交付包。
+
+使用原 `/root/dify-private/install.yml`，最少包含以下配置；这些是客户示例路径，不是 RHDP Jump 的配置：
+
+```yaml
+customer_bundle_dir: /opt/dify-media/bundle
+customer_state_root: /var/lib/dify-offline
+customer_kubeconfig: /root/dify-private/kubeconfig
+customer_context: customer-admin  # 客户确认过的实际 context
+```
 
 在上述选定的 `ansible/` 目录执行。为本次操作选择唯一 run ID（12–80 个字母、数字或连字符），示例为 `dify-reset-lab-001`：
 
