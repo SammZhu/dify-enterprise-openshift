@@ -67,8 +67,63 @@ def clear_directory(record):
         else: entry.unlink()
 
 
+def same_namespace(item, namespace='dify'):
+    return item.get('metadata', {}).get('namespace', namespace) == namespace
+
+
+def managed_endpoints(item, objects, owned):
+    """Legacy Endpoints has no Service ownerReference: verify its live relation."""
+    if item.get('apiVersion') != 'v1' or item.get('kind') != 'Endpoints' or not same_namespace(item): return False
+    meta = item['metadata']
+    if any(ref['uid'] not in owned for ref in meta.get('ownerReferences', [])): return False
+    manager = meta.get('labels', {}).get('endpoints.kubernetes.io/managed-by')
+    if manager not in (None, 'endpoint-controller'): return False
+    services = [o for o in objects if o.get('apiVersion') == 'v1' and o.get('kind') == 'Service'
+                and same_namespace(o) and o['metadata']['name'] == meta['name'] and o['metadata']['uid'] in owned]
+    if len(services) != 1: return False
+    selector = services[0].get('spec', {}).get('selector', {})
+    if not selector: return False  # Manual / external endpoints are not controller-generated.
+    pods = {o['metadata']['uid']: o for o in objects if o.get('apiVersion') == 'v1' and o.get('kind') == 'Pod'
+            and same_namespace(o) and o['metadata']['uid'] in owned}
+    for subset in item.get('subsets', []):
+        for address in subset.get('addresses', []) + subset.get('notReadyAddresses', []):
+            ref = address.get('targetRef', {}); pod = pods.get(ref.get('uid'))
+            if (ref.get('kind') != 'Pod' or not pod or ref.get('namespace', 'dify') != 'dify'
+                    or ref.get('name') != pod['metadata']['name']): return False
+            if any(pod['metadata'].get('labels', {}).get(k) != v for k, v in selector.items()): return False
+            ips = {i['ip'] for i in pod.get('status', {}).get('podIPs', [])}
+            if pod.get('status', {}).get('podIP'): ips.add(pod['status']['podIP'])
+            if address.get('ip') not in ips: return False
+    return True
+
+
+def controller_lease(item, objects, expected, owned):
+    """Recognize only the Dify CRD controller's observed leader-election lock."""
+    if (item.get('apiVersion') != 'coordination.k8s.io/v1' or item.get('kind') != 'Lease'
+            or item['metadata']['name'] != '40c5ee95.dify.ai' or not same_namespace(item)): return False
+    if any(ref['uid'] not in owned for ref in item['metadata'].get('ownerReferences', [])): return False
+    holder, separator, nonce = item.get('spec', {}).get('holderIdentity', '').rpartition('_')
+    if not separator or not re.fullmatch(r'[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}', nonce): return False
+    pods = [o for o in objects if o.get('kind') == 'Pod' and same_namespace(o)
+            and o['metadata']['name'] == holder and o['metadata']['uid'] in owned]
+    if len(pods) != 1: return False
+    controllers = {o['metadata']['uid'] for o in objects if o.get('apiVersion') == 'apps/v1'
+                   and o.get('kind') == 'Deployment' and same_namespace(o) and o['metadata']['uid'] in owned
+                   and o['metadata']['name'].endswith('-crd-controller')
+                   and ('apps', 'Deployment', o['metadata']['name']) in expected}
+    by_uid = {o['metadata']['uid']: o for o in objects if same_namespace(o)}
+    pending = [pods[0]['metadata']['uid']]; visited = set()
+    while pending:
+        uid = pending.pop()
+        if uid in controllers: return True
+        if uid in visited or uid not in owned: continue
+        visited.add(uid)
+        pending.extend(ref['uid'] for ref in by_uid.get(uid, {}).get('metadata', {}).get('ownerReferences', []))
+    return False
+
+
 def classify(objects, expected, pvc_names):
-    """Return foreign roots; generated children are accepted only through owned UIDs."""
+    """Prove ownership via manifests, UID chains and bounded controller relations."""
     service_accounts = {'default', 'builder', 'deployer'} | {name for group, kind, name in expected if kind == 'ServiceAccount'}
     owned = set(); pending = []
     for item in objects:
@@ -94,7 +149,8 @@ def classify(objects, expected, pvc_names):
     # A UID already proven through its canonical manifest is the same object.
     pending = [i for i in pending if i['metadata']['uid'] not in owned]
     while True:
-        children = [i for i in pending if any(ref['uid'] in owned for ref in i['metadata'].get('ownerReferences', []))]
+        children = [i for i in pending if any(ref['uid'] in owned for ref in i['metadata'].get('ownerReferences', []))
+                    or managed_endpoints(i, objects, owned) or controller_lease(i, objects, expected, owned)]
         if not children: break
         owned.update(i['metadata']['uid'] for i in children)
         pending = [i for i in pending if i['metadata']['uid'] not in owned]
