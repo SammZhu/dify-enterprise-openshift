@@ -1,12 +1,12 @@
 # RHDP 离线集群上的 Dify 部署自动化
 
-入口是 `ansible/dify.yml`，在 **OpenShift Disconnected Workshop 的 Jump** 上执行。集群创建独立维护于私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)，本工程不再包含集群创建入口。客户单机 Podman / 本地 S3 交付使用独立的 [客户 Quick Start](customer-quickstart.md)，其他拓扑见 [底层工具手动参考](disconnected-manual.md)。
+入口是 `ansible/dify.yml`，在 **OpenShift Disconnected Workshop 的 Jump** 上执行。集群创建独立维护于私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)，本工程不再包含集群创建入口。客户安装是主线，操作从 [客户 Quick Start](customer-quickstart.md) 开始；本 RHDP 入口适配同一个客户 Role，扩展参数见 [高级配置](disconnected-manual.md)。
 
-**部署验证状态：2026-11-02 已在当前真实 RHDP 环境完成部署验收。** 本轮没有 Enterprise 离线 License；覆盖工作负载、数据层、TLS S3 和 HTTPS 入口，模型、插件构建和 RAG 未验证。原部署为同一环境修复后续跑完成；没有在第二套全新环境重复验证。Ansible 迁移复验范围单独记录在下文。
+**本次原生 YAML 重构尚未在 RHDP 完整重装验收。** 2026-11-02 的真实部署属于旧实现的历史记录，范围见文末。本次本地测试采用受控集群/容器边界；现场仍需重新制作介质、安装及验收，License、插件、模型和 RAG 也需单独验证。
 
 ## 使用 Ansible
 
-Ansible 控制端在联网 Jump 上运行，要求 Python 3.12+；Highside 和本机任务仍使用 RHEL `/usr/bin/python3` 3.9+ 及已有 PyYAML。依赖固定在 `ansible/requirements.txt`，无需 Galaxy Collections。依据 [官方 Python 支持矩阵](https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html) 选择版本。
+Ansible 控制端在联网 Jump 上运行，要求 Python 3.12；Highside 远程模块使用 RHEL `/usr/bin/python3` 3.9+；联网制作控制端使用 Python 3.12，以收集客户离线控制端所需的匹配 wheel。依赖固定在 `ansible/requirements.txt`，无需 Galaxy Collections。依据 [官方 Python 支持矩阵](https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html) 选择版本。
 
 ```bash
 # 在 Jump 的完整工程目录；允许从源码包展开，不要求 Git。
@@ -26,22 +26,22 @@ ansible-playbook status.yml
 
 `--check` 显示计划、校验阶段顺序，不读取源认证或连接 AWS，也不代表现场预检通过。正常执行由 inventory 管理 Jump/Highside 连接。`inventory.example.yml` 默认使用 RHDP 的 `highside` SSH 别名和既有认证；不关闭 host-key 校验、不采集 Portal 密码。不要把真实 SSH Key、registry auth 或 License 放进 inventory/vars。
 
-需要先创建集群时，先在 **rhdp-demo-automation** 的 `ansible/` 目录执行 `ansible-playbook cluster.yml`，成功后回到本工程的 `ansible/` 目录执行 `ansible-playbook dify.yml`。两个工程通过 Highside `/mnt/high-side-data/rhdp-bootstrap` 下的 `ready.json`、`environment.json`、`cluster/metadata.json`、`payload/oc` 和 `cluster/auth/kubeconfig` 衔接；私有文件不通过 Git 传递。脚本不自动延长 Portal 生命周期。
+需要先创建集群时，先在 **rhdp-demo-automation** 的 `ansible/` 目录执行 `ansible-playbook cluster.yml`，成功后回到本工程的 `ansible/` 目录执行 `ansible-playbook dify.yml`。两个工程通过 Highside `/mnt/high-side-data/rhdp-bootstrap` 下的 `ready.json`、`environment.json`、`cluster/metadata.json`、`payload/oc` 和 `cluster/auth/kubeconfig` 衔接；私有文件不通过 Git 传递。Playbook 不自动延长 Portal 生命周期。
 
-部署入口依赖完整工程中的 `ansible/`、`examples/`、`offline/`、`docs/`、`README.md` 以及三个通用交付助手。Ansible 仅快照公开依赖目录和 `offline.py` / `offline-post-render.sh` / `start-offline-services.sh`；不搬运 `.git`、本地私有 values、凭证或运行状态。应提供干净的公开源码包，不在依赖目录混入客户文件。
+部署入口调用与客户相同的原生 YAML Role；公开源码需包含 `ansible/`、`examples/`、`docs/` 和 `README.md`。传输的是客户封包，不搬运 `.git`、测试参考代码、源凭证或联网端运行状态。公开依赖目录不能混入客户文件。
 
-前提：Linux amd64 Jump、RHEL Highside、既有 SSH/sudo、Podman、OpenSSL、rsync；Jump 私有的 `~/pull-secret-example.json` 有合法镜像访问权限。流程校验 Linux Helm 3.16.4，使用集群创建阶段的匹配版本 oc 和固定 3.9.8 Chart。
+前提：RHEL 9 amd64 Jump/Highside、既有 SSH/sudo、Podman、OpenSSL、rsync；Jump 私有的 `~/pull-secret-example.json` 有合法镜像访问权限。客户制包任务下载校验 Linux Helm 3.16.4、与实际集群版本匹配的 oc 和固定 3.9.8 Chart；RHDP 参数探测使用原集群目录的 oc。
 
-Sandbox 镜像的 UID/GID 超出默认 rootless 映射范围，包内 `bin/podman` 使用 rootful Podman 保留元数据；针对本次 RHEL 9.6/systemd/crun 的 eBPF device-filter 错误，限定使用 `--cgroup-manager=cgroupfs`。SELinux/seccomp 保持启用，OpenShift 节点运行时配置不变。见 [Podman 全局选项](https://docs.podman.io/en/stable/markdown/podman.1.html)。其他客户若使用 rootless，需另验其用户命名空间映射。
+Sandbox 镜像的 UID/GID 超出默认 rootless 映射范围，原生任务直接以 rootful Podman 保留元数据，使用 `podman --cgroup-manager=cgroupfs`，不再携带 `bin/podman` 包装脚本；针对本次 RHEL 9.6/systemd/crun 的 eBPF device-filter 错误，限定使用 `--cgroup-manager=cgroupfs`。SELinux/seccomp 保持启用，OpenShift 节点运行时配置不变。见 [Podman 全局选项](https://docs.podman.io/en/stable/markdown/podman.1.html)。其他客户若使用 rootless，需另验其用户命名空间映射。
 
 ## 自动阶段
 
 | 阶段 | 动作 |
 |---|---|
-| preflight | 绑定当前集群 UUID、Highside 身份及参数，要求已有集群 ready.json，检查 Jump 容量 |
-| tools | 下载校验 Linux Helm，准备匹配的 oc 和 rootful Podman 包装器 |
+| preflight | 读取已验收集群的版本/域与 Highside DNS；校验客户参数和 Jump 空间；部署前客户预检绑定集群 UUID 与介质 |
+| tools | 下载校验 Linux Helm 和匹配版本的 oc；Podman 直接以 rootful 模式调用 |
 | prepare | 渲染真实 Chart、解析运行时镜像、导出 OCI 包并生成校验清单 |
-| transfer | rsync 源码、交付包和非秘密参数，离线侧完整复核 |
+| transfer | 源端校验后只 rsync 客户 bundle，离线侧用相同校验器完整复核 |
 | network | 仅允许当前集群节点安全组访问 Highside TCP 5000/9443/9444，不使用公网 CIDR，不更改出口策略 |
 | services | 在 Highside 生成私有 TLS/认证材料，启动三个本地服务，并安装启用专属 systemd 开机单元 |
 | import | 只从 OCI 归档加载镜像，推到本地 Registry，以目标 digest 固定引用 |
@@ -50,7 +50,7 @@ Sandbox 镜像的 UID/GID 超出默认 rootless 映射范围，包内 `bin/podma
 
 联网侧只在 Jump 取材。Highside 不访问公共 Helm 仓库、容器仓库或 pip；CA 派生构建使用 `--network=none --pull=never`。本轮无插件 wheels，索引为空；插件依赖闭包及插件构建不属于已验收项。
 
-Ansible 负责编排、rsync 白名单传输和阶段等待；领域操作由自定义模块完成，通用镜像/Helm 引擎仍为 offline.py，不再调用旧 Python 控制器。长任务以 async 和正数 poll 串行等待，参见 [官方说明](https://docs.ansible.com/projects/ansible/latest/playbooks_async.html)。
+客户 Role 用原生任务完成制包、TLS、Podman、镜像、Helm、清理和验收；RHDP 只适配环境探测、传输和 AWS 私网配置，不再调用自定义 Python 模块或脚本安装引擎。镜像导出、封包和 Helm 长任务以 async 和正数 poll 串行等待，参见 [官方说明](https://docs.ansible.com/projects/ansible/latest/playbooks_async.html)。
 
 本入口使用：
 
@@ -68,27 +68,27 @@ Jump 默认状态 `/mnt/low-side-data/dify-bootstrap`；Highside 默认 `/mnt/hi
 
 同一参数和集群可重新运行。已有完整包会重新校验；Registry/数据目录保留，服务只有通过包身份标签检查才重用。仅同一包创建、处于从未启动的 `Created` 状态的部分容器可重新创建，全部绑定数据和凭证保留；运行过或归属不同的部分服务会停止并要求检查。不接管已有在线 Dify release，不删除 PVC、数据库或对象存储。`status.yml` 仅显示历史完成标记，现场健康以重新执行 `check` 阶段结果为准。
 
-首次导出中断后，当前版本会保留部分包并停止，要求查看 `logs/prepare.log` 后选择新的 `rhdp_dify_work_dir`；不要把部分包当完整交付物。成功封包后的 rsync 可续传，导入可以重复。参数或集群变化会拒绝复用原状态。
+首次导出中断后，当前版本会保留部分包并停止，要求查看 `logs/last-error.json` 后选择新的 `rhdp_dify_work_dir`；不要把部分包当完整交付物。成功封包后的 rsync 可续传，导入可以重复。参数或集群变化会拒绝复用原状态。
 
-参数见 `ansible/group_vars/all.yml`，客户覆盖文件放到仓库外并设置 0600，通过 `-e @/私有路径/profile.yml` 传入。保持参数不变才能复用原状态。本 RHDP 入口固定使用集群实际 Ingress 域、linux/amd64、namespace/release dify、Highside Registry 5000 / wheels 9443 / 本地 S3 9444；覆盖文件不可关闭本地 S3 或改变这些拓扑参数，脚本会在导出前拒绝。其他受支持架构或外部 S3 可使用通用 offline.py 流程；通用入口也固定 namespace/release dify，其他命名空间需要另外适配和验证。可选择已具备前提的阶段，列表必须按原顺序：
+参数见 `ansible/group_vars/all.yml`，客户覆盖文件放到仓库外并设置 0600，通过 `-e @/私有路径/profile.yml` 传入。保持参数不变才能复用原状态。本 RHDP 入口固定使用集群实际 Ingress 域、linux/amd64、namespace/release dify、Highside Registry 5000 / wheels 9443 / 本地 S3 9444；默认验证请保持这些拓扑参数；Role 会检查参数契约和主机架构。客户扩展的外部 S3/arm64 分支须另行验证；RHDP 默认链路不验收这些分支，其他 namespace 仍需适配，见 [高级适配范围](disconnected-manual.md)。可选择已具备前提的阶段，列表必须按原顺序：
 
 ```bash
 ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","tools","prepare"]}'
-# 现有部署的现场复验；仍会执行身份检查和公开源码同步
+# 现有部署的现场复验；读取既有 Highside 包，不重新传输或制包
 ansible-playbook dify.yml -e '{"rhdp_dify_stages":["preflight","check"]}'
 ```
 
-每次执行在两侧创建原子的 `.ansible-run/owner.json`，阻止另一 Playbook 接管，具体阶段仍有文件锁。正常完成/失败时释放本次租约；强制杀掉控制端、主机故障或 SSH 中断可能残留租约，必须先检查异步任务、owner.json 和私有日志，确认没有仍在运行的任务后再人工处理，禁止自动抢锁。不要混用旧 Python 控制器。
+制包期间客户 Role 持有 Jump 的原子 `.ansible-run/owner.json` 租约；传输、安装或清理时持有 Highside 对应租约，互斥修改同一状态。原生阶段不再使用旧 Python 文件锁。正常完成/失败时释放本次租约；强制杀掉控制端、主机故障或 SSH 中断可能残留租约，必须先检查异步任务、owner.json 和私有日志，确认没有仍在运行的任务后再人工处理，禁止自动抢锁。不要混用旧 Python 控制器。
 
-含敏感中间结果的 Ansible 任务使用 no_log，不 fetch 私有文件；自定义模块的原始异常保留为目标主机 `logs/ansible-<phase>.log`，模块只返回阶段状态与必要的非秘密身份。
+含敏感中间结果的原生任务使用 `no_log`，不 fetch 私有文件；客户 Role 的失败详情写到对应状态目录 `logs/last-error.json`，权限 0600。不要把私有日志上传到 GitHub。
 
-真实 Podman 可能返回不带前缀的源 ID；Docker 转 OCI 时还可能改变 config 摘要。导出器将原始 ID 规范化存入 `sourceImageId`，从校验过的 OCI manifest/config 读取实际加载用的 `imageId`，两者不要求相同。本轮归档实测有 16/29 个转换后的 config ID 与源不同，已通过离线侧实际加载验证。
+真实 Podman 可能返回不带前缀的源 ID；Docker 转 OCI 时还可能改变 config 摘要。导出器将原始 ID 规范化存入 `sourceImageId`，从校验过的 OCI manifest/config 读取实际加载用的 `imageId`，两者不要求相同。旧实现的现场归档曾有 16/29 个转换后的 config ID 与源不同；本次仍需现场验证，不能把这条历史记录当作新实现的加载验收。
 
 成功后 Highside 生成私有 `deployment-ready.json`。报告区分部署验收和未提供 License、插件/模型/RAG 未测试，不能据此宣称完整业务验收通过。应用对外可见的地址、状态和日志见这个报告及状态目录，不把客户凭证写进文档。
 
 ## 主机重启恢复
 
-`services` 阶段在校验三个容器的包身份后，部署 `/etc/systemd/system/dify-offline-services.service`。已存在但没有本工程标记的同名单元会被拒绝覆盖。模板先在私有 state 目录生成，并由 Highside 的 `systemd-analyze verify` 校验后安装。
+`services` 阶段在校验三个容器的包身份后，部署 `/etc/systemd/system/dify-offline-services.service`。已存在但内容不与当前专属模板完全匹配的同名单元会被拒绝覆盖。模板先在私有 state 目录生成，并由 Highside 的 `systemd-analyze verify` 校验后安装。
 
 单元依赖网络和数据盘挂载，以固定的 `--cgroup-manager=cgroupfs` 启动已有的 Registry、wheel/S3 nginx 和 SeaweedFS 容器；不创建/替换容器，不读取源仓库凭证，也不接管 8443 的 rootless Quay。依赖方式见 [systemd RequiresMountsFor](https://www.freedesktop.org/software/systemd/man/devel/systemd.unit.html)。它负责开机启动，不是完整 HA 或持续健康监控。
 
@@ -104,6 +104,8 @@ sudo systemctl disable --now dify-offline-services.service
 `check` 会等待运行 Pod Ready，排除已经完成的凭证生成 Job；最终检查仍会拒绝失败 Pod，不因等待过滤而忽略实际失败。没有运行 services 的验收只检查当前状态，不会暗中启动容器。
 
 ## 实测记录
+
+以下为重构前实现的历史现场记录。本次原生化必须另行运行客户链路验证，不能直接沿用历史成功结论。
 
 本次使用 Guide 默认 `disco.lab` 单节点集群，实例为 `m6i.2xlarge`，OpenShift 4.20.8；没有为 Dify 扩容、安装 GitOps/ODF 或增加新的 AWS 实例。
 
@@ -151,4 +153,4 @@ RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工�
 
 ## 按客户入口复验时的 Highside 前置
 
-RHDP 远程部署的 Highside Python 3.9 与客户入口在本地主机运行 Ansible 所需的 Python 3.12 是不同前提。若按客户 Quick Start 复验，在 Jump 用 [原生前置任务](host-prerequisites.md) 准备 Highside；该步骤不等于 Dify 全量原生化，也不代表离线应用安装阶段可以访问公网。
+RHDP 远程部署的 Highside Python 3.9 与客户入口在本地主机运行 Ansible 所需的 Python 3.12 是不同前提。若按客户 Quick Start 复验，在 Jump 用 [原生前置任务](host-prerequisites.md) 准备 Highside；该步骤仅准备 OS，应用流程使用同一客户原生 Role；它不代表离线应用安装阶段可以访问公网。

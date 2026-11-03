@@ -1,0 +1,112 @@
+---
+- name: Wait for application Pods excluding completed setup Jobs
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', 'pods', '-n', 'dify', '--field-selector=status.phase!=Succeeded,status.phase!=Failed', '--for=condition=Ready', '--timeout=600s'] }}"
+  changed_when: false
+
+- name: Read all namespace Pods for independent acceptance checks
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'pods', '-n', 'dify', '-o', 'json'] }}"
+  register: dify_accept_pods
+  changed_when: false
+  no_log: true
+
+- name: Require nonempty namespace workloads
+  ansible.builtin.assert:
+    that: (dify_accept_pods.stdout | from_json)['items'] | length > 0
+    quiet: true
+
+- name: Require Ready Pods and exclusively internal container images
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/check-pod.yml"
+  loop: "{{ (dify_accept_pods.stdout | from_json)['items'] }}"
+  loop_control:
+    loop_var: dify_accept_pod
+    label: "{{ dify_accept_pod.metadata.name }}"
+
+- name: Query PostgreSQL databases using container credential environment
+  ansible.builtin.command:
+    argv: >-
+      {{ dify_oc + ['exec', 'dify-postgresql-0', '-n', 'dify', '--', 'bash', '-ec', 'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRESQL_USER" -d postgres -Atc \'SELECT datname FROM pg_database\''] }}
+  register: dify_accept_databases
+  changed_when: false
+  no_log: true
+
+- name: Require all four application databases
+  ansible.builtin.assert:
+    that: "['dify', 'enterprise', 'audit', 'dify_plugin_daemon'] | difference(dify_accept_databases.stdout_lines) | length == 0"
+    quiet: true
+
+- name: Check Redis using its container credential environment
+  ansible.builtin.command:
+    argv: >-
+      {{ dify_oc + ['exec', 'dify-redis-0', '-n', 'dify', '--', 'sh', '-ec', 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping'] }}
+  register: dify_accept_redis
+  changed_when: false
+  no_log: true
+
+- name: Require Redis PONG
+  ansible.builtin.assert:
+    that: dify_accept_redis.stdout | trim == 'PONG'
+    quiet: true
+
+- name: Verify authenticated TLS S3 write, read and delete from a cluster Pod
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/check-s3.yml"
+  when: dify_cfg.offline.localS3.enabled | bool
+
+- name: Read application routes and ingress router CA
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get'] + item + ['-o', 'json'] }}"
+  loop:
+    - [routes, -n, dify]
+    - [secret, router-ca, -n, openshift-ingress-operator, --ignore-not-found]
+  register: dify_accept_routes
+  changed_when: false
+  no_log: true
+
+- name: Read system roots and the optional customer Route CA
+  ansible.builtin.slurp:
+    src: "{{ item }}"
+  loop: "{{ ['/etc/pki/tls/certs/ca-bundle.crt'] + ([customer_route_ca] if customer_route_ca | length > 0 else []) }}"
+  register: dify_route_trust
+
+- name: Store combined system, router and supplied Route trust outside sealed media
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/router-ca.crt"
+    mode: '0600'
+    content: |
+      {% for ca_file in dify_route_trust.results %}
+      {{ ca_file.content | b64decode }}
+      {% endfor %}
+      {{ (dify_accept_routes.results[1].stdout | default('{}', true) | from_json).get('data', {}).get('tls.crt', '') | b64decode }}
+
+- name: Check HTTPS routes with certificate verification
+  ansible.builtin.uri:
+    url: "https://{{ item.spec.host }}{{ item.spec.path | default('/') }}"
+    ca_path: "{{ dify_state }}/router-ca.crt"
+    validate_certs: true
+    use_proxy: false
+    status_code: "{{ range(200, 500) | list }}"
+  loop: "{{ (dify_accept_routes.results[0].stdout | from_json)['items'] }}"
+  register: dify_route_results
+  no_log: true
+
+- name: Require at least one successful Dify HTTPS entry
+  ansible.builtin.assert:
+    that: dify_route_results.results | selectattr('status', 'equalto', 200) | list | length > 0
+    quiet: true
+
+- name: Record deployment acceptance separately from licensed business acceptance
+  ansible.builtin.set_fact:
+    dify_route_report: []
+
+- name: Retain each HTTPS route address and observed status
+  ansible.builtin.set_fact:
+    dify_route_report: "{{ dify_route_report + [{'host': item.url | urlsplit('hostname'), 'url': item.url, 'status': item.status}] }}"
+  loop: "{{ dify_route_results.results }}"
+  no_log: true
+
+- name: Write deployment acceptance separately from licensed business acceptance
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/deployment-ready.json"
+    mode: '0600'
+    content: "{{ {'version': '3.9.8', 'scope': 'deployment acceptance only', 'localS3Roundtrip': dify_cfg.offline.localS3.enabled | bool, 'externalStorage': 'requires separate functional acceptance' if not dify_cfg.offline.localS3.enabled | bool else 'not used', 'license': 'activation not verified', 'pluginsModelsRAG': 'not tested', 'routes': dify_route_report} | to_nice_json }}\n"

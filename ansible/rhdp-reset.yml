@@ -12,7 +12,9 @@
         fail_msg: Configure exactly one Highside host for this reset.
 
     - name: Run the same guarded reset through the existing Highside connection
-      ansible.builtin.import_tasks: tasks/customer-reset-workflow.yml
+      ansible.builtin.include_role:
+        name: dify_offline
+        tasks_from: reset/main
       vars:
         customer_bundle_dir: "{{ rhdp_dify_remote_dir }}/bundle"
         customer_state_root: "{{ rhdp_dify_remote_dir }}"

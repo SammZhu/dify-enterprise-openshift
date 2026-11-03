@@ -1,0 +1,40 @@
+---
+- name: Require the specific Dify election lock and a valid observed holder
+  ansible.builtin.assert:
+    that:
+      - dify_generated_object.metadata.namespace | default('dify') == 'dify'
+      - dify_generated_object.metadata.name == '40c5ee95.dify.ai'
+      - dify_generated_object.spec.holderIdentity | default('') is match('^.+_[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$')
+      - dify_generated_object.metadata.ownerReferences | default([]) | map(attribute='uid') | difference(dify_owned_uids) | length == 0
+    quiet: true
+
+- name: Identify expected owned controller Deployment UIDs
+  ansible.builtin.set_fact:
+    dify_controller_deployments: "{{ dify_reset_objects | selectattr('apiVersion', 'equalto', 'apps/v1') | selectattr('kind', 'equalto', 'Deployment') | selectattr('metadata.name', 'search', '-crd-controller$') | selectattr('metadata.uid', 'in', dify_owned_uids) | map(attribute='metadata.uid') | unique | list }}"
+    dify_controller_replicasets: []
+    dify_controller_holder_pods: "{{ dify_reset_objects | selectattr('kind', 'equalto', 'Pod') | selectattr('metadata.name', 'equalto', dify_generated_object.spec.holderIdentity.rsplit('_', 1)[0]) | selectattr('metadata.uid', 'in', dify_owned_uids) | unique(attribute='metadata.uid') | list }}"
+
+- name: Verify controller Deployments are explicitly present in the Chart contract
+  ansible.builtin.assert:
+    that: ('apps/Deployment/' + item.metadata.name) in dify_expected_keys
+    quiet: true
+  loop: "{{ dify_reset_objects | selectattr('metadata.uid', 'in', dify_controller_deployments) | list }}"
+  no_log: true
+
+- name: Prove ReplicaSet ancestry to the expected CRD controller
+  ansible.builtin.set_fact:
+    dify_controller_replicasets: "{{ (dify_controller_replicasets + [item.metadata.uid]) | unique }}"
+  loop: "{{ dify_reset_objects | selectattr('kind', 'equalto', 'ReplicaSet') | selectattr('metadata.uid', 'in', dify_owned_uids) | list }}"
+  when: item.metadata.ownerReferences | default([]) | map(attribute='uid') | intersect(dify_controller_deployments) | length > 0
+  no_log: true
+
+- name: Require the live holder Pod's controller ancestry
+  ansible.builtin.assert:
+    that:
+      - dify_controller_holder_pods | length == 1
+      - dify_controller_holder_pods[0].metadata.ownerReferences | default([]) | map(attribute='uid') | intersect(dify_controller_replicasets + dify_controller_deployments) | length > 0
+    quiet: true
+
+- name: Accept only the proven Dify election Lease UID
+  ansible.builtin.set_fact:
+    dify_owned_uids: "{{ (dify_owned_uids + [dify_generated_object.metadata.uid]) | unique }}"

@@ -1,0 +1,42 @@
+---
+- name: Transform resource images and pull authentication
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/transform-resource.yml"
+
+- name: Mark shared CRDs for retention
+  ansible.builtin.set_fact:
+    dify_resource: "{{ dify_resource | combine({'metadata': {'annotations': {'helm.sh/resource-policy': 'keep'}}}, recursive=true) }}"
+  when: dify_resource.kind == 'CustomResourceDefinition'
+
+- name: Inspect an existing setup Job before replacement
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'job', dify_resource.metadata.name, '-n', 'dify', '--ignore-not-found', '-o', 'json'] }}"
+  register: dify_existing_job
+  changed_when: false
+  when: dify_resource.kind == 'Job'
+  no_log: true
+
+- name: Reject active or unowned setup Jobs
+  ansible.builtin.assert:
+    that:
+      - (dify_existing_job.stdout | from_json).metadata.get('labels', {}).get('demo.redhat.com/application', '') == 'dify-enterprise'
+      - (dify_existing_job.stdout | from_json).get('status', {}).get('succeeded', 0) | int > 0 or (dify_existing_job.stdout | from_json).get('status', {}).get('failed', 0) | int > 0
+    quiet: true
+  when: dify_resource.kind == 'Job' and dify_existing_job.stdout | length > 0
+  no_log: true
+
+- name: Delete only the completed owned setup Job with a UID precondition
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['delete', '--raw', '/apis/batch/v1/namespaces/dify/jobs/' + dify_resource.metadata.name, '-f', '-'] }}"
+    stdin: "{{ {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions': {'uid': (dify_existing_job.stdout | from_json).metadata.uid}, 'propagationPolicy': 'Foreground'} | to_json }}"
+  when: dify_resource.kind == 'Job' and dify_existing_job.stdout | length > 0
+  no_log: true
+
+- name: Wait for the replaced Job to disappear
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', '--for=delete', 'job/' + dify_resource.metadata.name, '-n', 'dify', '--timeout=120s'] }}"
+  when: dify_resource.kind == 'Job' and dify_existing_job.stdout | length > 0
+
+- name: Apply one dependency resource
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/apply.yml"
+  vars:
+    dify_apply_resource: "{{ dify_resource }}"

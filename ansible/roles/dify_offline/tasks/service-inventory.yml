@@ -1,0 +1,31 @@
+---
+- name: Inspect each named service without accepting unowned containers
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['container', 'inspect', item.name] }}"
+  become: true
+  loop: "{{ [{'name': 'dify-offline-registry', 'mount': '/var/lib/registry', 'source': dify_state + '/registry-data'}, {'name': 'dify-offline-pypi', 'mount': '/usr/share/nginx/html', 'source': dify_bundle + '/pypi'}] + ([{'name': 'dify-offline-s3', 'mount': '/data', 'source': dify_state + '/s3-data'}] if dify_cfg.offline.localS3.enabled | bool else []) }}"
+  register: dify_container_inspections
+  changed_when: false
+  failed_when: dify_container_inspections.rc not in [0, 125]
+  no_log: true
+
+- name: Initialize live service map
+  ansible.builtin.set_fact:
+    dify_service_containers: {}
+
+- name: Check each existing container's lock label and bind mount
+  ansible.builtin.assert:
+    that:
+      - (item.stdout | from_json)[0].Config.Labels['io.dify.offline.bundle'] | default('') == dify_lock_sha
+      - (item.stdout | from_json)[0].Mounts | selectattr('Destination', 'equalto', item.item.mount) | map(attribute='Source') | list == [item.item.source]
+    quiet: true
+  loop: "{{ dify_container_inspections.results }}"
+  when: item.rc == 0
+  no_log: true
+
+- name: Retain proven service identities
+  ansible.builtin.set_fact:
+    dify_service_containers: "{{ dify_service_containers | combine({item.item.name: (item.stdout | from_json)[0]}) }}"
+  loop: "{{ dify_container_inspections.results }}"
+  when: item.rc == 0
+  no_log: true

@@ -1,0 +1,11 @@
+---
+# Input/output dify_text is serialized YAML or decoded text. Boundary matching
+# prevents busybox:latest changing registry.example/x/busybox:latest.
+- name: Replace complete image references with pinned destination digests
+  ansible.builtin.set_fact:
+    dify_text: "{{ dify_text | regex_replace('(?<![\\w./:@-])' + (image_mapping.key | regex_escape) + '(?![\\w.:/@-])', image_mapping.value) }}"
+  loop: "{{ dify_image_map | dict2items | sort(attribute='key', reverse=true) }}"
+  loop_control:
+    loop_var: image_mapping
+    label: "{{ image_mapping.key }}"
+  no_log: true

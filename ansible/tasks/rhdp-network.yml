@@ -1,0 +1,93 @@
+---
+- name: Obtain IMDSv2 token on the RHDP host
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/api/token
+    method: PUT
+    headers: {X-aws-ec2-metadata-token-ttl-seconds: '60'}
+    use_proxy: false
+    return_content: true
+  register: rhdp_network_token
+  no_log: true
+
+- name: Read AWS instance identity through IMDSv2
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/dynamic/instance-identity/document
+    headers: {X-aws-ec2-metadata-token: "{{ rhdp_network_token.content }}"}
+    use_proxy: false
+    return_content: true
+  register: rhdp_network_identity
+  no_log: true
+
+- name: Select the current region
+  ansible.builtin.set_fact:
+    rhdp_aws: [aws, --region, "{{ rhdp_network_identity.json.region }}"]
+
+- name: Read Highside security groups
+  ansible.builtin.command:
+    argv: "{{ rhdp_aws + ['ec2', 'describe-instances', '--instance-ids', rhdp_network_identity.json.instanceId, '--output', 'json'] }}"
+  register: rhdp_network_highside
+  changed_when: false
+
+- name: Read installed cluster infrastructure identity
+  ansible.builtin.slurp:
+    src: "{{ rhdp_cluster_remote_dir }}/cluster/metadata.json"
+  register: rhdp_network_cluster
+  no_log: true
+
+- name: Read current cluster node names
+  ansible.builtin.command:
+    argv: ["{{ rhdp_cluster_remote_dir }}/payload/oc", --kubeconfig, "{{ rhdp_cluster_remote_dir }}/cluster/auth/kubeconfig", get, nodes, -o, json]
+  register: rhdp_network_nodes
+  changed_when: false
+
+- name: Select infrastructure and Highside identity
+  ansible.builtin.set_fact:
+    rhdp_infra_id: "{{ (rhdp_network_cluster.content | b64decode | from_json).infraID }}"
+    rhdp_highside_instance: "{{ (rhdp_network_highside.stdout | from_json).Reservations[0].Instances[0] }}"
+
+- name: Require exactly one Highside security group
+  ansible.builtin.assert:
+    that: rhdp_highside_instance.SecurityGroups | length == 1
+    quiet: true
+
+- name: Find running instances belonging to this cluster only
+  ansible.builtin.command:
+    argv: "{{ rhdp_aws + ['ec2', 'describe-instances', '--filters', 'Name=tag:kubernetes.io/cluster/' + rhdp_infra_id + ',Values=owned', 'Name=instance-state-name,Values=running', '--output', 'json'] }}"
+  register: rhdp_network_instances
+  changed_when: false
+
+- name: Match node names to live AWS instances
+  ansible.builtin.set_fact:
+    rhdp_node_instances: "{{ (rhdp_network_instances.stdout | from_json).Reservations | map(attribute='Instances') | flatten | selectattr('PrivateDnsName', 'in', (rhdp_network_nodes.stdout | from_json)['items'] | map(attribute='metadata.name') | list) | list }}"
+
+- name: Require nonempty same-VPC node instances
+  ansible.builtin.assert:
+    that:
+      - rhdp_node_instances | length > 0
+      - rhdp_node_instances | map(attribute='VpcId') | unique | list == [rhdp_highside_instance.VpcId]
+    quiet: true
+
+- name: Select explicit source and destination groups
+  ansible.builtin.set_fact:
+    rhdp_source_sgs: "{{ rhdp_node_instances | map(attribute='SecurityGroups') | flatten | map(attribute='GroupId') | unique | sort }}"
+    rhdp_target_sg: "{{ rhdp_highside_instance.SecurityGroups[0].GroupId }}"
+
+- name: Read group ownership and existing ingress rules
+  ansible.builtin.command:
+    argv: "{{ rhdp_aws + ['ec2', 'describe-security-groups', '--group-ids'] + rhdp_source_sgs + [rhdp_target_sg, '--output', 'json'] }}"
+  register: rhdp_network_groups
+  changed_when: false
+
+- name: Require source groups dedicated to this infrastructure
+  ansible.builtin.assert:
+    that: item.GroupName.startswith(rhdp_infra_id)
+    quiet: true
+  loop: "{{ (rhdp_network_groups.stdout | from_json).SecurityGroups | selectattr('GroupId', 'in', rhdp_source_sgs) | list }}"
+  loop_control:
+    label: "{{ item.GroupId }}"
+
+- name: Add only missing same-VPC group-to-group private service access
+  ansible.builtin.include_tasks: rhdp-network-rule.yml
+  loop: "{{ [5000, 9443, 9444] | product(rhdp_source_sgs) | list }}"
+  loop_control:
+    loop_var: rhdp_service_rule

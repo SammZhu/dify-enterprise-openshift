@@ -8,3 +8,6 @@ customer_context: customer-admin
 # customer_tls_cert: /root/dify-private/server.crt
 # customer_tls_key: /root/dify-private/server.key
 # customer_tls_ca: /root/dify-private/ca.crt
+
+# Optional private CA for OpenShift Routes, independent of the Podman service CA.
+# customer_route_ca: /root/dify-private/route-ca.crt

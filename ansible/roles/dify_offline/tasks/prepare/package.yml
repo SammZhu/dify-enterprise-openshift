@@ -1,0 +1,42 @@
+---
+- name: Verify complete media before packaging
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Require the customer controller metadata
+  ansible.builtin.stat:
+    path: "{{ dify_bundle }}/customer-media.json"
+  register: dify_packaged_controller
+
+- name: Require completed controller stage
+  ansible.builtin.assert:
+    that: dify_packaged_controller.stat.exists
+    quiet: true
+
+- name: Package verified media into a temporary archive
+  ansible.builtin.command:
+    argv: [tar, -C, "{{ dify_root }}", -czf, "{{ dify_root }}/dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz.part", bundle]
+  async: "{{ customer_phase_timeout }}"
+  poll: 20
+
+- name: Publish the completed archive atomically
+  ansible.builtin.command:
+    argv: [mv, "{{ dify_root }}/dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz.part", "{{ dify_root }}/dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz"]
+
+- name: Hash the archive using streaming SHA256
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz"
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: dify_archive
+
+- name: Publish the checksum sidecar
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz.sha256"
+    content: "{{ dify_archive.stat.checksum }}  dify-offline-3.9.8-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz\n"
+    mode: '0644'
+
+- name: Record media readiness without claiming application acceptance
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/media-ready.json"
+    content: "{{ {'archive': dify_archive.stat.path, 'sha256': dify_archive.stat.checksum, 'scope': 'platform media; plugin/model/license acceptance remains separate'} | to_nice_json }}\n"
+    mode: '0600'

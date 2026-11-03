@@ -1,0 +1,8 @@
+---
+- name: Apply an explicitly constructed resource over the selected context
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['apply', '-f', '-'] }}"
+    stdin: "{{ dify_apply_resource | to_nice_yaml }}"
+  register: dify_apply_result
+  changed_when: "' unchanged' not in dify_apply_result.stdout"
+  no_log: true

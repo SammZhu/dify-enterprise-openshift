@@ -1,0 +1,56 @@
+---
+- name: Construct local child values
+  ansible.builtin.set_fact:
+    dify_child_component: '{{ dify_cfg.components[dify_child.field] | combine({''namespace'': ''dify'', ''serviceAccountName'': dify_cfg.components.prereqs.serviceAccountName}, recursive=true)
+      }}'
+  no_log: true
+- name: Disable online prerequisite builders and optional integrations
+  ansible.builtin.set_fact:
+    dify_child_component: '{{ dify_child_component | combine({''minioCredentials'': dify_cfg.components.minio.enabled, ''imageRepoSecret'': {''enabled'': false}, ''imageBuilder'': {''enabled'':
+      false}, ''monitoring'': {''enabled'': false, ''dashboard'': {''enabled'': false}, ''alerts'': {''enabled'': false}}}, recursive=true) }}'
+  when: dify_child.field == 'prereqs'
+- name: Disable the child Chart's online vendor fetch
+  ansible.builtin.set_fact:
+    dify_child_component: '{{ dify_child_component | combine({''chart'': {''enabled'': false}}, recursive=true) }}'
+  when: dify_child.field == 'dify'
+- name: Build complete child values
+  ansible.builtin.set_fact:
+    dify_child_values: '{{ {dify_child.field: dify_child_component} | combine({''deployer'': dify_cfg.deployer, ''litemaas'': {''apiUrl'': '''', ''apiKey'': '''', ''model'': ''''}, ''objectStorage'':
+      dify_cfg.components.objectStorage} if dify_child.field == ''dify'' else {}) if dify_child.field != ''pluginCrds'' else {''plugin_controller'': {''installCrd'': true}} }}'
+  no_log: true
+- name: Write private child values
+  ansible.builtin.copy:
+    content: '{{ dify_child_values | to_nice_yaml }}'
+    dest: '{{ dify_render_temp.path }}/child.yaml'
+    mode: '0600'
+  no_log: true
+  changed_when: false
+- name: Render one local child Chart
+  ansible.builtin.command:
+    argv:
+    - '{{ dify_helm }}'
+    - template
+    - dify
+    - '{{ dify_components }}/{{ dify_child.chart }}'
+    - -n
+    - dify
+    - -f
+    - '{{ dify_render_temp.path }}/child.yaml'
+    - --api-versions
+    - route.openshift.io/v1
+    - --api-versions
+    - security.openshift.io/v1
+  register: dify_child_render
+  changed_when: false
+  no_log: true
+- name: Retain enabled dependency resources
+  ansible.builtin.set_fact:
+    dify_groups: '{{ dify_groups | combine({dify_child.chart: dify_child_render.stdout | from_yaml_all | select(''mapping'') | list}) }}'
+  when: dify_child.field != 'dify'
+  no_log: true
+- name: Extract generated vendor values from the local Dify child
+  ansible.builtin.set_fact:
+    dify_vendor_values: '{{ ((dify_child_render.stdout | from_yaml_all | select(''mapping'') | selectattr(''kind'', ''equalto'', ''ConfigMap'') | selectattr(''metadata.name'', ''equalto'',
+      ''dify-values'') | first).data[''dify-values.yaml'']) | from_yaml }}'
+  when: dify_child.field == 'dify'
+  no_log: true

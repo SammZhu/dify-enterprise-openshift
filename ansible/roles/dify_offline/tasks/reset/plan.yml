@@ -1,0 +1,72 @@
+---
+- name: Build a fresh plan only for a live namespace
+  when: not customer_reset_resume | bool
+  block:
+    - name: Require a live installed namespace and all owned services
+      ansible.builtin.assert:
+        that:
+          - dify_reset_ns is not none
+          - dify_reset_ns.metadata.deletionTimestamp is not defined
+          - dify_service_containers | length == 3
+        quiet: true
+
+    - name: Prove complete namespace inventory and backing volumes
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inventory.yml"
+
+    - name: Assemble data-directory identity records
+      ansible.builtin.set_fact:
+        dify_reset_directories: {}
+
+    - name: Include each directory's device and inode
+      ansible.builtin.set_fact:
+        dify_reset_directories: "{{ dify_reset_directories | combine({item.item: {'path': item.stat.path, 'device': item.stat.dev, 'inode': item.stat.inode}}) }}"
+      loop: "{{ dify_reset_data_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Construct immutable reviewed reset plan
+      ansible.builtin.set_fact:
+        dify_reset_plan:
+          format: 2
+          mode: "{{ customer_reset_mode }}"
+          identity: "{{ dify_reset_identity }}"
+          namespaceUID: "{{ dify_reset_ns.metadata.uid }}"
+          objects: "{{ dify_reset_object_records }}"
+          volumes: "{{ dify_reset_volumes | sort(attribute='name') }}"
+          containers: "{{ dict(dify_service_containers.keys() | zip(dify_service_containers.values() | map(attribute='Id'))) }}"
+          directories: "{{ dify_reset_directories }}"
+          unitSHA256: "{{ dify_reset_unit.stat.checksum | default(none) }}"
+
+    - name: Fingerprint the entire reviewed scope
+      ansible.builtin.set_fact:
+        dify_reset_plan: "{{ dify_reset_plan | combine({'confirmation': dify_reset_plan | to_json(sort_keys=true, separators=[',', ':']) | hash('sha256')}) }}"
+
+- name: Load a confirmed journal for explicit resume
+  when: customer_reset_resume | bool
+  block:
+    - name: Inspect the resumed journal and plan without following links
+      ansible.builtin.stat:
+        path: "{{ dify_root }}/reset-runs/{{ dify_run_id }}{{ item }}"
+        follow: false
+      loop: ['', /plan.json]
+      register: dify_resumed_plan_stats
+
+    - name: Require a real existing journal and a regular confirmed plan
+      ansible.builtin.assert:
+        that:
+          - dify_resumed_plan_stats.results[0].stat.isdir | default(false)
+          - dify_resumed_plan_stats.results[1].stat.isreg | default(false)
+          - dify_resumed_plan_stats.results | selectattr('stat.islnk', 'defined') | selectattr('stat.islnk') | list | length == 0
+        quiet: true
+
+    - name: Read the confirmed reset plan without creating a journal
+      ansible.builtin.slurp:
+        src: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/plan.json"
+      register: dify_resumed_plan
+
+    - name: Decode previously confirmed scope
+      ansible.builtin.set_fact:
+        dify_reset_plan: "{{ dify_resumed_plan.content | b64decode | from_json }}"
+
+    - name: Revalidate the journal against live identities
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/validate.yml"

@@ -1,0 +1,29 @@
+---
+- name: Resolve source and authentication paths before reading credentials
+  ansible.builtin.command:
+    argv: [realpath, -e, --, "{{ item }}"]
+  loop: ["{{ customer_source_dir }}", "{{ customer_source_authfile }}"]
+  register: dify_source_realpaths
+  changed_when: false
+  no_log: true
+
+- name: Refuse credentials inside public source even through a symbolic alias
+  ansible.builtin.assert:
+    that:
+      - dify_source_realpaths.results[1].stdout != dify_source_realpaths.results[0].stdout
+      - not dify_source_realpaths.results[1].stdout.startswith(dify_source_realpaths.results[0].stdout + '/')
+    quiet: true
+    fail_msg: Source registry credentials must resolve outside the public source tree.
+  no_log: true
+
+- name: Read private source registry authentication
+  ansible.builtin.slurp:
+    src: "{{ customer_source_authfile }}"
+  register: dify_source_auth
+  no_log: true
+
+- name: Require source registry authentication entries
+  ansible.builtin.assert:
+    that: (dify_source_auth.content | b64decode | from_json).auths | length > 0
+    quiet: true
+  no_log: true

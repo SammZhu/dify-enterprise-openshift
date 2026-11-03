@@ -1,0 +1,36 @@
+---
+- name: Override configured runtime images before Helm computes Secret checksums
+  ansible.builtin.set_fact:
+    dify_vendor_values: "{{ dify_vendor_values | combine({'plugin_connector': {'shaderImage': dify_image_map[dify_effective_connector.shaderImage], 'gatewayImage': dify_image_map[dify_effective_connector.gatewayImage], 'busyBoxImage': dify_image_map[dify_effective_connector.busyBoxImage], 'awsCliImage': dify_image_map[dify_effective_connector.awsCliImage]}}, recursive=true) }}"
+  no_log: true
+
+- name: Serialize vendor values with unresolved credential references
+  ansible.builtin.set_fact:
+    dify_values_text: "{{ dify_vendor_values | to_json }}"
+  no_log: true
+
+- name: Resolve each referenced Secret from the selected namespace
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/resolve-secret.yml"
+  loop: "{{ dify_values_text | regex_findall('@@secret:([a-z0-9-]+)/([A-Za-z0-9_.-]+)@@') | unique }}"
+  loop_control:
+    loop_var: dify_secret_reference
+  no_log: true
+
+- name: Require that all credential references have been resolved
+  ansible.builtin.assert:
+    that: "'@@secret:' not in dify_values_text"
+    quiet: true
+  no_log: true
+
+- name: Map embedded runtime image references before Chart rendering
+  ansible.builtin.set_fact:
+    dify_text: "{{ dify_values_text }}"
+  no_log: true
+
+- name: Rewrite generator references before Helm hashes the generated Secret
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/map-text.yml"
+
+- name: Retain mapped values for the local vendor render
+  ansible.builtin.set_fact:
+    dify_values_text: "{{ dify_text }}"
+  no_log: true

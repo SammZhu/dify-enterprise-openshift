@@ -1,0 +1,43 @@
+---
+- name: Re-read the namespace to detect unexpected recreation
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'namespace', 'dify', '--ignore-not-found', '-o', 'json'] }}"
+  register: dify_reset_final_namespace
+  changed_when: false
+
+- name: Require namespace deletion before declaring completion
+  ansible.builtin.assert:
+    that: dify_reset_final_namespace.stdout | length == 0
+    quiet: true
+
+- name: Verify no owned services remain for a full reset
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/service-inventory.yml"
+  when: customer_reset_mode == 'full'
+
+- name: Require complete service cleanup for a full reset
+  ansible.builtin.assert:
+    that: dify_service_containers | length == 0
+    quiet: true
+  when: customer_reset_mode == 'full'
+
+- name: Invalidate historical acceptance and selected installation stage markers
+  ansible.builtin.file:
+    path: "{{ dify_root }}/{{ item }}"
+    state: absent
+  loop: "{{ ['deployment-ready.json', 'stages/install.json', 'stages/check.json'] + (['stages/services.json', 'stages/import.json', 'state/image-map.json', 'state/import.yaml', 'state/push-digest'] if customer_reset_mode == 'full' else []) }}"
+
+- name: Write reset report without claiming a new installation passed
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/reset-report.json"
+    mode: '0600'
+    content: "{{ {'runID': dify_run_id, 'mode': customer_reset_mode, 'namespaceDeleted': true, 'applicationDataReset': true, 'registryDataReset': customer_reset_mode == 'full', 'retained': ['sealed bundle', 'CA and credentials', 'cluster-scoped resources', 'Podman image cache'], 'volumes': dify_reset_plan.volumes, 'scope': 'reset complete; installation/acceptance must run again'} | to_nice_json }}\n"
+
+- name: Record completed reset journal
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/finish.json"
+    content: '{"completed": true}'
+    mode: '0600'
+
+- name: Show completion and customer reinstall entry
+  ansible.builtin.debug:
+    msg: "Reset {{ dify_run_id }} completed. Report: {{ dify_root }}/reset-report.json. Reinstall using customer-install.yml."

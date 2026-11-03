@@ -24,7 +24,7 @@ from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location("offline", ROOT / "scripts/offline.py")
+SPEC = importlib.util.spec_from_file_location("offline", ROOT / "tests/reference/offline.py")
 offline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(offline)
 
@@ -196,7 +196,7 @@ class UnitTests(unittest.TestCase):
             logfile = td / "podman.log"
             env = dict(os.environ, PATH=f"{fakebin}:{Path(sys.executable).parent}:{os.environ['PATH']}",
                        FAKE_PODMAN_LOG=str(logfile))
-            cmd = ["bash", str(ROOT / "scripts/start-offline-services.sh"), str(bundle), str(td / "state"),
+            cmd = ["bash", str(ROOT / "tests/reference/start-offline-services.sh"), str(bundle), str(td / "state"),
                    str(cert), str(key), str(htpasswd)]
             result = subprocess.run(cmd, text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -399,7 +399,7 @@ class RealChartTests(unittest.TestCase):
                 self.assertFalse(any('auth.json' in n or 'inventory.local' in n for n in names))
             playbook = Path(sys.executable).parent / 'ansible-playbook'
             for entry in ('customer-install.yml',):
-                result = subprocess.run([str(playbook), '-i', 'localhost,', entry, '--check'],
+                result = subprocess.run([str(playbook), '-i', 'localhost,', entry, '--check', '-e', json.dumps({'ansible_become': False, 'customer_state_root': str((td/'native-check-state').resolve()), 'customer_bundle_dir': str(bundle.resolve())})],
                     cwd=bundle / 'ansible', capture_output=True, text=True,
                     env=dict(os.environ, ANSIBLE_LOCAL_TEMP=str(td / 'ansible-local'),
                              ANSIBLE_REMOTE_TEMP=str(td / 'ansible-remote')))

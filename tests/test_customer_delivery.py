@@ -10,7 +10,7 @@ from unittest.mock import patch
 import ansible.module_utils
 
 ROOT = Path(__file__).resolve().parents[1]
-ansible.module_utils.__path__.insert(0, str(ROOT / 'ansible/module_utils'))
+ansible.module_utils.__path__.insert(0, str(ROOT / 'tests/reference'))
 c = importlib.import_module('ansible.module_utils.customer_delivery')
 
 

@@ -1,0 +1,106 @@
+---
+- name: Inspect completed or partial media directory
+  ansible.builtin.stat:
+    path: "{{ dify_bundle }}"
+  register: dify_export_existing
+
+- name: Verify an already exported bundle on repeat runs
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+  when: dify_export_existing.stat.exists
+
+- name: Refuse mixing a previous script-based export with native customer media
+  ansible.builtin.assert:
+    that: "'source/scripts/offline.py' not in dify_expected_checksums"
+    fail_msg: This is an older script-based bundle. Preserve it and choose a new customer_media_root to prepare native Ansible media.
+    quiet: true
+  when: dify_export_existing.stat.exists
+
+- name: Prepare a new sealed offline bundle
+  when: not dify_export_existing.stat.exists
+  block:
+    - name: Select connected-side rendering paths
+      ansible.builtin.set_fact:
+        dify_helm: "{{ dify_root }}/tools/bin/helm"
+        dify_chart: "{{ dify_root }}/tools/dify-enterprise-3.9.8.tgz"
+        dify_components: "{{ customer_source_dir }}/examples/helm/components"
+
+    - name: Confirm the vendor Chart identity
+      ansible.builtin.command:
+        argv: ["{{ dify_helm }}", show, chart, "{{ dify_chart }}"]
+      register: dify_chart_meta
+      changed_when: false
+
+    - name: Require the reviewed vendor Chart
+      ansible.builtin.assert:
+        that:
+          - (dify_chart_meta.stdout | from_yaml).name == 'dify-enterprise'
+          - (dify_chart_meta.stdout | from_yaml).version | string == '3.9.8'
+        quiet: true
+
+    - name: Render all enabled resources and runtime values
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/render.yml"
+
+    - name: Collect workload and configured runtime image references
+      ansible.builtin.set_fact:
+        dify_image_roles: "{{ {'registry': dify_cfg.offline.registryImage, 'wheel-server': dify_cfg.offline.wheelServerImage} | combine({'object-store': dify_cfg.offline.localS3.image} if dify_cfg.offline.localS3.enabled | bool else {}) }}"
+        dify_image_refs: >-
+          {{ ((dify_groups | to_nice_yaml | regex_findall('(?m)^\s*image: ["\x27]?([^\s"\x27]+)')) + [dify_effective_connector.shaderImage, dify_effective_connector.gatewayImage, dify_effective_connector.busyBoxImage, dify_effective_connector.awsCliImage] + ((dify_effective_connector.generatorConf | from_yaml).generator.python.versions | dict2items | map(attribute='value') | map('dict2items') | flatten | map(attribute='value') | list) + [dify_cfg.offline.registryImage, dify_cfg.offline.wheelServerImage] + ([dify_cfg.offline.localS3.image] if dify_cfg.offline.localS3.enabled | bool else [])) | unique | sort }}
+
+    - name: Create media directories
+      ansible.builtin.file:
+        path: "{{ dify_bundle }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: ['', source, docs, images, plugins, pypi, pypi/simple, bin]
+
+    - name: Copy public Chart sources and tools only
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ dify_bundle }}/{{ item.dest }}"
+        remote_src: true
+        mode: preserve
+      loop:
+        - {src: "{{ customer_source_dir }}/examples", dest: source/}
+        - {src: "{{ dify_chart }}", dest: dify-enterprise.tgz}
+
+    - name: Copy only the two verified target tool binaries
+      ansible.builtin.copy:
+        src: "{{ dify_root }}/tools/bin/{{ item }}"
+        dest: "{{ dify_bundle }}/bin/{{ item }}"
+        remote_src: true
+        mode: '0700'
+      loop: [oc, helm]
+
+    - name: Copy the public offline documentation whitelist
+      ansible.builtin.copy:
+        src: "{{ customer_source_dir }}/docs/{{ item }}"
+        dest: "{{ dify_bundle }}/docs/{{ item }}"
+        remote_src: true
+        mode: '0644'
+      loop: [customer-quickstart.md, host-prerequisites.md, disconnected-reset.md, disconnected-install.md, disconnected-manual.md, disconnected-validation.md, rhdp-dify-offline.md, native-ansible.md]
+
+    - name: Write reviewed media configuration
+      ansible.builtin.copy:
+        content: "{{ dify_cfg | to_nice_yaml }}"
+        dest: "{{ dify_bundle }}/config.yaml"
+        mode: '0600'
+      no_log: true
+
+    - name: Export each image as a single-platform OCI archive
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/prepare/export-image.yml"
+      loop: "{{ dify_image_refs }}"
+      loop_control:
+        loop_var: dify_image_ref
+        index_var: dify_image_index
+
+    - name: Write exported image lock
+      ansible.builtin.copy:
+        dest: "{{ dify_bundle }}/images.lock.yaml"
+        content: "{{ {'format': 1, 'status': 'exported', 'platform': dify_cfg.offline.platform, 'images': dify_exported_images} | to_nice_yaml }}"
+        mode: '0644'
+
+    - name: Prepare reviewed plugins and the wheel simple index
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/prepare/plugin-media.yml"
+
+    - name: Seal the complete export
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/seal.yml"

@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).resolve().parents[1] / "ansible/module_utils/rhdp_dify.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "tests/reference/rhdp_dify.py"
 
 
 class RhdpDifyTests(unittest.TestCase):

@@ -1,0 +1,140 @@
+---
+- name: Select local child Charts in dependency order
+  ansible.builtin.set_fact:
+    dify_children:
+    - field: prereqs
+      chart: dify-prereqs
+    - field: pluginCrds
+      chart: plugin-crds
+    - field: postgresql
+      chart: postgresql
+    - field: redis
+      chart: redis
+    - field: qdrant
+      chart: qdrant
+    - field: objectStorage
+      chart: objectstorage
+    - field: minio
+      chart: minio
+    - field: embedder
+      chart: embedder
+    - field: dify
+      chart: dify
+    dify_groups: {}
+- name: Allocate a private render workspace outside sealed media
+  ansible.builtin.tempfile:
+    state: directory
+    path: '{{ dify_root }}'
+    prefix: render-
+  register: dify_render_temp
+  changed_when: false
+- name: Render local Charts and vendor values
+  block:
+  - name: Render each enabled child Chart
+    ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/render-child.yml"
+    loop: '{{ dify_children }}'
+    loop_control:
+      loop_var: dify_child
+    when: dify_cfg.components[dify_child.field].enabled | bool
+  - name: Read vendor defaults for runtime image inventory
+    ansible.builtin.command:
+      argv:
+      - '{{ dify_helm }}'
+      - show
+      - values
+      - '{{ dify_chart }}'
+    register: dify_chart_defaults
+    changed_when: false
+    no_log: true
+  - name: Decode the plugin generator configuration
+    ansible.builtin.set_fact:
+      dify_vendor_defaults: '{{ dify_chart_defaults.stdout | from_yaml }}'
+      dify_generator: '{{ (dify_chart_defaults.stdout | from_yaml).plugin_connector.generatorConf | from_yaml }}'
+    no_log: true
+  - name: Configure internal plugin build index
+    ansible.builtin.set_fact:
+      dify_generator: '{{ dify_generator | combine({''generator'': {''python'': {''pipMirror'': dify_cfg.offline.pipMirror}}}, recursive=true) }}'
+    no_log: true
+  - name: Set fixed offline values and stable credential references
+    ansible.builtin.set_fact:
+      dify_vendor_values: '{{ dify_vendor_values | combine(dify_offline_values, recursive=true) }}'
+    vars:
+      dify_offline_values:
+        global:
+          appSecretKey: '@@secret:dify-offline-keys/appSecretKey@@'
+          innerApiKey: '@@secret:dify-offline-keys/innerApiKey@@'
+          customCA:
+            enabled: true
+            existingSecret: offline-registry-ca
+        enterprise:
+          appSecretKey: '@@secret:dify-offline-keys/dashboardSecretKey@@'
+        imagePullSecrets:
+        - name: offline-registry-pull
+        plugin_connector:
+          imageRepoPrefix: '{{ dify_cfg.offline.registry }}/plugins'
+          imageRepoType: docker
+          insecureImageRepo: false
+          generatorConf: '{{ dify_generator | to_yaml(indent=2, width=80, sort_keys=true) }}'
+    no_log: true
+  - name: Configure persistence only for the local S3 topology
+    ansible.builtin.set_fact:
+      dify_vendor_values: "{{ dify_vendor_values | combine(dify_local_storage, recursive=true) }}"
+    vars:
+      dify_local_storage:
+        persistence:
+          type: s3
+          s3:
+            endpoint: https://{{ dify_cfg.offline.registry.split(':')[0] }}:{{ dify_cfg.offline.localS3.port }}
+            accessKey: '@@secret:dify-local-s3/accessKey@@'
+            secretKey: '@@secret:dify-local-s3/secretKey@@'
+            bucketName: '{{ dify_cfg.offline.localS3.bucket }}'
+            region: us-east-1
+            addressType: ''
+            useAwsManagedIam: false
+            useAwsS3: false
+    when: dify_cfg.offline.localS3.enabled | bool
+    no_log: true
+  - name: Apply reviewed vendor values after topology defaults
+    ansible.builtin.set_fact:
+      dify_vendor_values: "{{ dify_vendor_values | combine(dify_cfg.offline.chartValues | default({}), recursive=true) }}"
+    no_log: true
+  - name: Reject Marketplace re-enablement through vendor overrides
+    ansible.builtin.assert:
+      that: not dify_vendor_values.global.marketplace.enabled | bool
+      quiet: true
+  - name: Write non-secret inventory values
+    ansible.builtin.copy:
+      content: '{{ dify_vendor_values | to_nice_yaml | regex_replace(''@@secret:[a-z0-9-]+/[A-Za-z0-9_.-]+@@'', ''offline-inventory-placeholder'') }}'
+      dest: '{{ dify_render_temp.path }}/vendor.yaml'
+      mode: '0600'
+    no_log: true
+    changed_when: false
+  - name: Render the vendor Chart including hooks
+    ansible.builtin.command:
+      argv:
+      - '{{ dify_helm }}'
+      - template
+      - dify
+      - '{{ dify_chart }}'
+      - -n
+      - dify
+      - -f
+      - '{{ dify_render_temp.path }}/vendor.yaml'
+      - --api-versions
+      - route.openshift.io/v1
+      - --api-versions
+      - security.openshift.io/v1
+    register: dify_vendor_render
+    changed_when: false
+    no_log: true
+  - name: Retain rendered vendor manifests for inventory and reset ownership
+    ansible.builtin.set_fact:
+      dify_groups: '{{ dify_groups | combine({''dify-enterprise'': dify_vendor_render.stdout | from_yaml_all | select(''mapping'') | list}) }}'
+      dify_effective_connector: '{{ (dify_vendor_defaults | combine(dify_vendor_values, recursive=true)).plugin_connector }}'
+    no_log: true
+  always:
+  - name: Remove private render workspace
+    ansible.builtin.file:
+      path: '{{ dify_render_temp.path }}'
+      state: absent
+    changed_when: false

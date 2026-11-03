@@ -1,0 +1,110 @@
+---
+- name: Read the pinned image map for the temporary S3 probe
+  ansible.builtin.slurp:
+    src: '{{ dify_state }}/image-map.json'
+  register: dify_s3_probe_map
+- name: Create one bounded S3 roundtrip Job
+  ansible.builtin.command:
+    argv: '{{ dify_oc + [''create'', ''-f'', ''-'', ''-o'', ''json''] }}'
+    stdin: '{{ dify_s3_probe_job | to_json }}'
+  vars:
+    dify_s3_probe_job:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        generateName: dify-offline-s3-check-
+        namespace: dify
+        labels:
+          demo.redhat.com/application: dify-enterprise
+      spec:
+        backoffLimit: 0
+        ttlSecondsAfterFinished: 600
+        template:
+          spec:
+            serviceAccountName: dify
+            restartPolicy: Never
+            imagePullSecrets:
+            - name: offline-registry-pull
+            containers:
+            - name: s3
+              image: '{{ (dify_s3_probe_map.content | b64decode | from_json)[''amazon/aws-cli:latest''] }}'
+              command:
+              - /bin/sh
+              - -ec
+              - |
+                {% raw %}
+                set -eu
+                call() { aws --endpoint-url "$ENDPOINT" --region us-east-1 s3api "$@"; }
+                key="offline-acceptance/$POD_UID"
+                expected='Dify offline S3 acceptance'
+                printf '%s' "$expected" > /tmp/upload
+                trap 'call delete-object --bucket "$BUCKET" --key "$key" >/dev/null' EXIT
+                call head-bucket --bucket "$BUCKET"
+                call put-object --bucket "$BUCKET" --key "$key" --body /tmp/upload >/dev/null
+                size=$(call get-object --bucket "$BUCKET" --key "$key" /tmp/download --query ContentLength --output text)
+                actual=
+                IFS= read -r actual < /tmp/download || true
+                [ "$actual" = "$expected" ]
+                [ "$size" -eq "${#expected}" ]
+                call delete-object --bucket "$BUCKET" --key "$key"
+                trap - EXIT
+                {% endraw %}
+              env:
+              - name: POD_UID
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.uid
+              - name: ENDPOINT
+                value: https://{{ dify_cfg.offline.registry.split(':')[0] }}:{{ dify_cfg.offline.localS3.port }}
+              - name: BUCKET
+                value: '{{ dify_cfg.offline.localS3.bucket }}'
+              - name: AWS_CA_BUNDLE
+                value: /ca/ca.crt
+              - name: AWS_EC2_METADATA_DISABLED
+                value: 'true'
+              - name: AWS_ACCESS_KEY_ID
+                valueFrom:
+                  secretKeyRef:
+                    name: dify-local-s3
+                    key: accessKey
+              - name: AWS_SECRET_ACCESS_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: dify-local-s3
+                    key: secretKey
+              volumeMounts:
+              - name: ca
+                mountPath: /ca
+                readOnly: true
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+            volumes:
+            - name: ca
+              secret:
+                secretName: offline-registry-ca
+        activeDeadlineSeconds: 180
+  register: dify_s3_probe_created
+  no_log: true
+- name: Check S3 with guaranteed scoped probe cleanup
+  block:
+  - name: Wait for S3 authenticated roundtrip completion
+    ansible.builtin.command:
+      argv: '{{ dify_oc + [''wait'', ''job/'' + (dify_s3_probe_created.stdout | from_json).metadata.name, ''-n'', ''dify'', ''--for=condition=complete'',
+        ''--timeout=180s''] }}'
+    changed_when: false
+  always:
+  - name: Remove only this temporary probe on success or failure
+    ansible.builtin.command:
+      argv: '{{ dify_oc + [''delete'', ''--raw'', ''/apis/batch/v1/namespaces/dify/jobs/'' + (dify_s3_probe_created.stdout | from_json).metadata.name,
+        ''-f'', ''-''] }}'
+      stdin: '{{ {''apiVersion'': ''v1'', ''kind'': ''DeleteOptions'', ''propagationPolicy'': ''Foreground'', ''preconditions'': {''uid'': (dify_s3_probe_created.stdout
+        | from_json).metadata.uid}} | to_json }}'
+  - name: Wait for this probe and its dependent Pods to disappear
+    ansible.builtin.command:
+      argv: '{{ dify_oc + [''wait'', ''job/'' + (dify_s3_probe_created.stdout | from_json).metadata.name, ''-n'', ''dify'', ''--for=delete'',
+        ''--timeout=120s''] }}'
+    changed_when: false

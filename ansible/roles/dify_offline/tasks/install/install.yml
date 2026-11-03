@@ -1,0 +1,73 @@
+---
+- name: Verify immutable media before deployment
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Read prior import record and destination digest mapping
+  ansible.builtin.slurp:
+    src: "{{ dify_state }}/{{ item }}"
+  loop: [import.yaml, image-map.json]
+  register: dify_import_records
+  no_log: true
+
+- name: Hash the service CA used by this installation
+  ansible.builtin.stat:
+    path: "{{ dify_state }}/certificates/ca.crt"
+    checksum_algorithm: sha256
+  register: dify_install_ca
+
+- name: Validate import record against bundle, registry and CA
+  ansible.builtin.assert:
+    that: >-
+      (dify_import_records.results[0].content | b64decode | from_yaml) == {'lockSHA256': dify_lock_sha, 'registry': dify_cfg.offline.registry, 'caSHA256': dify_install_ca.stat.checksum}
+    quiet: true
+  no_log: true
+
+- name: Decode exact destination digest mapping
+  ansible.builtin.set_fact:
+    dify_image_map: "{{ dify_import_records.results[1].content | b64decode | from_json }}"
+  no_log: true
+
+- name: Reject missing mappings and unpinned destination references
+  ansible.builtin.assert:
+    that:
+      - dify_image_map.keys() | list | sort == dify_lock.images | map(attribute='source') | sort
+      - item.value is match('^' + (dify_cfg.offline.registry | regex_escape) + '/dify-offline/image-[0-9]+@sha256:[a-f0-9]{64}$')
+    quiet: true
+  loop: "{{ dify_image_map | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Inspect installer marker and Helm release ownership
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get'] + item + ['-n', 'dify', '-o', 'json'] }}"
+  loop:
+    - [configmap, dify-offline-install, --ignore-not-found]
+    - [secret, -l, 'owner=helm,name=dify']
+  register: dify_release_probe
+  changed_when: false
+  no_log: true
+
+- name: Refuse takeover of an unrelated Helm release
+  ansible.builtin.assert:
+    that: (dify_release_probe.results[1].stdout | from_json)['items'] | length == 0 or (dify_release_probe.results[0].stdout | default('{}', true) | from_json).get('data', {}).get('installer', '') == 'offline-v1'
+    quiet: true
+  no_log: true
+
+- name: Merge registry trust and prepare stable cluster credentials
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/cluster-identity.yml"
+
+- name: Render dependencies and vendor values using local Charts
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/render.yml"
+
+- name: Install local dependency Charts in dependency order
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/dependency-group.yml"
+  loop: "{{ dify_groups | dict2items | rejectattr('key', 'equalto', 'dify-enterprise') | list }}"
+  loop_control:
+    loop_var: dify_dependency_group
+    label: "{{ dify_dependency_group.key }}"
+
+- name: Resolve stable secret references in vendor values
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/resolve-values.yml"
+
+- name: Install an offline derived Chart preserving Helm hook lifecycle
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/vendor-chart.yml"

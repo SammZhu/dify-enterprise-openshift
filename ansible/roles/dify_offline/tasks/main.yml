@@ -1,0 +1,75 @@
+---
+- name: Validate workflow selection
+  ansible.builtin.assert:
+    that:
+      - customer_mode in ['prepare', 'install']
+      - customer_stages | length > 0
+      - customer_stages == customer_all_stages | select('in', customer_stages) | list
+      - customer_stages | unique | length == customer_stages | length
+      - customer_stages[0] == 'preflight'
+    quiet: true
+
+- name: Select private paths and an independent run identity
+  ansible.builtin.set_fact:
+    dify_root: "{{ customer_media_root if customer_mode == 'prepare' else customer_state_root }}"
+    dify_bundle: "{{ customer_media_root + '/bundle' if customer_mode == 'prepare' else customer_bundle_dir }}"
+    dify_run_id: "{{ lookup('password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+    dify_podman: [podman, --cgroup-manager=cgroupfs]
+  no_log: true
+
+- name: Validate private paths before creating anything
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/paths.yml"
+
+- name: Describe check mode without claiming deployment validation
+  ansible.builtin.debug:
+    msg: "{{ customer_mode }}: {{ customer_stages }}. Check mode validates selection and paths only; no package, registry or cluster transaction."
+
+- name: Execute ordered tasks with exclusive state ownership
+  when: not ansible_check_mode
+  vars:
+    ansible_async_dir: "{{ dify_root }}/logs/async"
+  block:
+    - name: Create private state root
+      ansible.builtin.file:
+        path: "{{ dify_root }}"
+        state: directory
+        mode: '0700'
+
+    - name: Acquire exclusive installer lease atomically without takeover
+      ansible.builtin.command:
+        argv: [mkdir, -m, '0700', "{{ dify_root }}/.ansible-run"]
+      register: dify_lease
+      changed_when: true
+
+    - name: Persist lease owner
+      ansible.builtin.copy:
+        content: "{{ {'runId': dify_run_id} | to_json }}\n"
+        dest: "{{ dify_root }}/.ansible-run/owner.json"
+        mode: '0600'
+
+    - name: Execute native stages in dependency order
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/stage.yml"
+      loop: "{{ customer_stages }}"
+      loop_control:
+        loop_var: dify_stage
+  rescue:
+    - name: Create a private diagnostic directory
+      ansible.builtin.file:
+        path: "{{ dify_root }}/logs"
+        state: directory
+        mode: '0700'
+
+    - name: Keep failed command details on the managed host only
+      ansible.builtin.copy:
+        dest: "{{ dify_root }}/logs/last-error.json"
+        content: "{{ ansible_failed_result | to_nice_json }}\n"
+        mode: '0600'
+      no_log: true
+
+    - name: Stop the failed workflow without publishing credential-bearing output
+      ansible.builtin.fail:
+        msg: "Workflow failed. Inspect private diagnostics at {{ dify_root }}/logs/last-error.json."
+  always:
+    - name: Release only this workflow's lease
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/release.yml"
+      when: dify_lease is defined and dify_lease is succeeded

@@ -1,0 +1,132 @@
+---
+- name: Read minimal target host facts before any installation changes
+  ansible.builtin.setup:
+    gather_subset: [min]
+  when: ansible_facts.os_family is not defined
+
+- name: Require the supported Linux Podman host platform
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Linux'
+      - ansible_facts.os_family == 'RedHat'
+      - ansible_facts.distribution_major_version == '9'
+      - ansible_facts.architecture in ['x86_64', 'aarch64']
+    quiet: true
+
+- name: Verify sealed media before consulting the target
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Enforce the customer offline profile
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/validate-config.yml"
+
+- name: Select explicit client tools and state
+  ansible.builtin.set_fact:
+    dify_state: "{{ dify_root }}/state"
+    dify_helm: "{{ dify_bundle }}/bin/helm"
+    dify_chart: "{{ dify_bundle }}/dify-enterprise.tgz"
+    dify_components: "{{ dify_bundle }}/source/examples/helm/components"
+    dify_oc: ["{{ dify_bundle }}/bin/oc", --kubeconfig, "{{ customer_kubeconfig }}", --context, "{{ customer_context }}", '--request-timeout=60s']
+
+- name: Require explicitly selected kubeconfig and context
+  ansible.builtin.assert:
+    that:
+      - customer_kubeconfig is match('^/')
+      - customer_context | length > 0
+    quiet: true
+
+- name: Query cluster identity without changing resources
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', item, '-o', 'json'] }}"
+  loop: ['clusterversion/version', 'ingress.config.openshift.io/cluster', nodes]
+  register: dify_target
+  changed_when: false
+  no_log: true
+
+- name: Decode the target identity
+  ansible.builtin.set_fact:
+    dify_cluster: "{{ dify_target.results[0].stdout | from_json }}"
+    dify_ingress: "{{ dify_target.results[1].stdout | from_json }}"
+    dify_nodes: "{{ (dify_target.results[2].stdout | from_json)['items'] }}"
+  no_log: true
+
+- name: Require a matching apps domain and supported cluster architecture
+  ansible.builtin.assert:
+    that:
+      - dify_ingress.spec.domain == dify_cfg.deployer.domain
+      - dify_cluster.status.desired.version is match('^4\.(20|21)\.')
+      - dify_nodes | length > 0
+      - dify_nodes | map(attribute='status.nodeInfo.architecture') | unique | list == [dify_cfg.offline.platform.split('/')[1]]
+      - "dify_cfg.offline.platform.split('/')[1] == {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture]"
+    quiet: true
+
+- name: Require existing storage classes for application PVCs
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'storageclass', dify_cfg.components[item].storage.storageClassName, '-o', 'name'] }}"
+  loop: [postgresql, redis, qdrant]
+  changed_when: false
+
+- name: Read the client version recorded in customer media
+  ansible.builtin.slurp:
+    src: "{{ dify_bundle }}/customer-media.json"
+  register: dify_client_metadata
+  when: "'customer-media.json' in dify_expected_checksums"
+
+- name: Require the bundled client minor to match this cluster
+  ansible.builtin.assert:
+    that: (dify_client_metadata.content | b64decode | from_json).ocpVersion.split('.')[:2] == dify_cluster.status.desired.version.split('.')[:2]
+    quiet: true
+  when: "'customer-media.json' in dify_expected_checksums"
+
+- name: Inspect any legacy installation binding before accepting native state
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/binding.json"
+    follow: false
+  register: dify_legacy_binding_stat
+
+- name: Read the legacy binding if this is an existing installation
+  ansible.builtin.slurp:
+    src: "{{ dify_root }}/binding.json"
+  register: dify_legacy_binding
+  when: dify_legacy_binding_stat.stat.exists
+  no_log: true
+
+- name: Refuse takeover of legacy state for another cluster or service host
+  ansible.builtin.assert:
+    that:
+      - not dify_legacy_binding_stat.stat.islnk | default(false)
+      - previous.identity.clusterID == dify_cluster.spec.clusterID
+      - previous.identity.domain == dify_cfg.deployer.domain
+      - previous.settings.remoteDir == dify_root
+      - previous.identity.highside.hostname == dify_cfg.offline.registry.split(':')[0]
+    quiet: true
+  vars:
+    previous: "{{ dify_legacy_binding.content | b64decode | from_json }}"
+  when: dify_legacy_binding_stat.stat.exists
+  no_log: true
+
+- name: Bind state to this cluster, context and exact media
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/bind.yml"
+  vars:
+    dify_binding_path: "{{ dify_root }}/customer-binding.json"
+    dify_binding:
+      clusterID: "{{ dify_cluster.spec.clusterID }}"
+      context: "{{ customer_context }}"
+      configSHA256: "{{ dify_expected_checksums['config.yaml'] }}"
+      imagesSHA256: "{{ dify_lock_sha }}"
+
+- name: Create private application state
+  ansible.builtin.stat:
+    path: "{{ dify_state }}"
+    follow: false
+  register: dify_private_state_stat
+
+- name: Refuse symlinked application state
+  ansible.builtin.assert:
+    that: not dify_private_state_stat.stat.islnk | default(false)
+    quiet: true
+
+- name: Create the verified private application state
+  ansible.builtin.file:
+    path: "{{ dify_state }}"
+    state: directory
+    mode: '0700'

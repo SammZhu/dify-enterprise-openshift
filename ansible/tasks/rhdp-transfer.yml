@@ -1,0 +1,66 @@
+---
+- name: Allocate this transfer's lease identity
+  ansible.builtin.set_fact:
+    rhdp_transfer_run_id: "{{ lookup('password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+
+- name: Transfer and verify without racing an active customer installation
+  block:
+    - name: Acquire the Highside installation lease atomically
+      ansible.builtin.command:
+        argv: [mkdir, -m, '0700', "{{ rhdp_dify_remote_dir }}/.ansible-run"]
+      delegate_to: "{{ rhdp_highside_host }}"
+      register: rhdp_transfer_lease
+
+    - name: Record this transfer's lease owner
+      ansible.builtin.copy:
+        dest: "{{ rhdp_dify_remote_dir }}/.ansible-run/owner.json"
+        content: "{{ {'runId': rhdp_transfer_run_id} | to_json }}\n"
+        mode: '0600'
+      delegate_to: "{{ rhdp_highside_host }}"
+
+    - name: Verify connected-side media before copying any bytes
+      ansible.builtin.include_role:
+        name: dify_offline
+        tasks_from: verify
+      vars:
+        dify_bundle: "{{ rhdp_dify_work_dir }}/bundle"
+
+    - name: Transfer the sealed bundle without source credentials or state
+      ansible.builtin.command:
+        argv: [rsync, -a, --checksum, --partial, --itemize-changes, -e, 'ssh -o BatchMode=yes -o ConnectTimeout=20', "{{ rhdp_dify_work_dir }}/bundle", "{{ rhdp_rsync_target }}:{{ rhdp_dify_remote_dir }}/"]
+      register: rhdp_customer_transfer
+      changed_when: rhdp_customer_transfer.stdout | length > 0
+      async: "{{ rhdp_phase_timeout }}"
+      poll: 20
+      no_log: true
+
+    - name: Reuse the customer sealed-media verifier on Highside
+      ansible.builtin.include_role:
+        name: dify_offline
+        tasks_from: verify
+        apply:
+          delegate_to: "{{ rhdp_highside_host }}"
+      vars:
+        dify_bundle: "{{ rhdp_dify_remote_dir }}/bundle"
+  always:
+    - name: Read the transfer lease before releasing it
+      ansible.builtin.slurp:
+        src: "{{ rhdp_dify_remote_dir }}/.ansible-run/owner.json"
+      delegate_to: "{{ rhdp_highside_host }}"
+      register: rhdp_transfer_owner
+      when: rhdp_transfer_lease is defined and rhdp_transfer_lease is succeeded
+      no_log: true
+
+    - name: Verify this transfer still owns the lease
+      ansible.builtin.assert:
+        that: (rhdp_transfer_owner.content | b64decode | from_json).runId == rhdp_transfer_run_id
+        quiet: true
+      when: rhdp_transfer_lease is defined and rhdp_transfer_lease is succeeded
+      no_log: true
+
+    - name: Release only this transfer's lease
+      ansible.builtin.file:
+        path: "{{ rhdp_dify_remote_dir }}/.ansible-run"
+        state: absent
+      delegate_to: "{{ rhdp_highside_host }}"
+      when: rhdp_transfer_lease is defined and rhdp_transfer_lease is succeeded

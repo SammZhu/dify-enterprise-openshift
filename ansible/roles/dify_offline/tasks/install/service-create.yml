@@ -1,0 +1,94 @@
+---
+- name: Load service-role images only from verified archives
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['load', '-i', dify_bundle + '/' + item.archive] }}"
+  become: true
+  loop: "{{ dify_lock.images | selectattr('roles') | list }}"
+  loop_control:
+    label: "{{ item.roles }}"
+
+- name: Select loadable service image IDs
+  ansible.builtin.set_fact:
+    dify_service_images: "{{ dify_service_images | default({}) | combine(dict(item.roles | zip([item.imageId] * (item.roles | length)))) }}"
+  loop: "{{ dify_lock.images | selectattr('roles') | list }}"
+  loop_control:
+    label: "{{ item.roles }}"
+
+- name: Require all service images in the verified lock
+  ansible.builtin.assert:
+    that: "(['registry', 'wheel-server'] + (['object-store'] if dify_cfg.offline.localS3.enabled | bool else [])) | difference(dify_service_images.keys() | list) | length == 0"
+    quiet: true
+
+- name: Write S3 container environment as a private file
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/local-s3.env"
+    mode: '0600'
+    content: |
+      AWS_ACCESS_KEY_ID={{ dify_s3_identity.accessKey }}
+      AWS_SECRET_ACCESS_KEY={{ dify_s3_identity.secretKey }}
+      S3_BUCKET={{ dify_s3_identity.bucket }}
+  no_log: true
+
+  when: dify_cfg.offline.localS3.enabled | bool
+
+- name: Write TLS wheel index and S3 proxy configuration
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/nginx.conf"
+    mode: '0600'
+    content: |
+      events {}
+      http {
+        server {
+          listen {{ dify_cfg.offline.pipMirror | urlsplit('port') }} ssl;
+          ssl_certificate /certs/server.crt;
+          ssl_certificate_key /certs/server.key;
+          root /usr/share/nginx/html;
+          location /simple/ { autoindex off; }
+        }
+      {% if dify_cfg.offline.localS3.enabled | bool %}
+        server {
+          listen {{ dify_cfg.offline.localS3.port }} ssl;
+          ssl_certificate /certs/server.crt;
+          ssl_certificate_key /certs/server.key;
+          client_max_body_size 0;
+          location / {
+            proxy_pass http://dify-offline-s3:8333;
+            proxy_set_header Host $http_host;
+            proxy_request_buffering off;
+            proxy_buffering off;
+          }
+        }
+      {% endif %}
+      }
+
+- name: Inspect the dedicated Podman network
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['network', 'exists', 'dify-offline'] }}"
+  become: true
+  register: dify_network_exists
+  changed_when: false
+  failed_when: dify_network_exists.rc not in [0, 1]
+
+- name: Create the local service network if absent
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['network', 'create', 'dify-offline'] }}"
+  become: true
+  when: dify_network_exists.rc == 1
+
+- name: Create S3 with persistent data and no image pulls
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['create', '--name', 'dify-offline-s3', '--pull=never', '--restart=unless-stopped', '--label', 'io.dify.offline.bundle=' + dify_lock_sha, '--network', 'dify-offline', '--user', '0', '--env-file', dify_state + '/local-s3.env', '-v', dify_state + '/s3-data:/data:Z', dify_service_images['object-store'], 'mini', '-dir=/data'] }}"
+  become: true
+  no_log: true
+
+  when: dify_cfg.offline.localS3.enabled | bool
+
+- name: Create TLS authenticated registry with persistent data
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['create', '--name', 'dify-offline-registry', '--pull=never', '--restart=unless-stopped', '--label', 'io.dify.offline.bundle=' + dify_lock_sha, '-p', dify_cfg.offline.registry.split(':')[1] + ':5000', '-v', dify_state + '/registry-data:/var/lib/registry:Z', '-v', dify_state + '/tls:/certs:ro,z', '-v', dify_state + '/auth:/auth:ro,Z', '-e', 'REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.crt', '-e', 'REGISTRY_HTTP_TLS_KEY=/certs/server.key', '-e', 'REGISTRY_AUTH=htpasswd', '-e', 'REGISTRY_AUTH_HTPASSWD_REALM=offline', '-e', 'REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd', dify_service_images.registry] }}"
+  become: true
+
+- name: Create public wheel index and authenticated S3 TLS proxy
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['create', '--name', 'dify-offline-pypi', '--pull=never', '--restart=unless-stopped', '--label', 'io.dify.offline.bundle=' + dify_lock_sha, '--network', 'dify-offline', '-p', (dify_cfg.offline.pipMirror | urlsplit('port') | string) + ':' + (dify_cfg.offline.pipMirror | urlsplit('port') | string), ] + (['-p', (dify_cfg.offline.localS3.port | string) + ':' + (dify_cfg.offline.localS3.port | string)] if dify_cfg.offline.localS3.enabled | bool else []) + ['-v', dify_bundle + '/pypi:/usr/share/nginx/html:ro,Z', '-v', dify_state + '/tls:/certs:ro,z', '-v', dify_state + '/nginx.conf:/etc/nginx/nginx.conf:ro,Z', dify_service_images['wheel-server']] }}"
+  become: true

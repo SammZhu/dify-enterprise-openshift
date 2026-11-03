@@ -1,0 +1,3 @@
+---
+- name: Revalidate sealed media
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"

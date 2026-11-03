@@ -1,0 +1,21 @@
+---
+- name: "{{ customer_mode }} | {{ dify_stage }}"
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/{{ customer_mode }}/{{ dify_stage }}.yml"
+
+- name: Create stage journal directory
+  ansible.builtin.file:
+    path: "{{ dify_root }}/stages"
+    state: directory
+    mode: '0700'
+
+- name: Record successful native stage only after completion
+  ansible.builtin.command:
+    argv: [date, -u, '+%Y-%m-%dT%H:%M:%SZ']
+  register: dify_stage_time
+  changed_when: false
+
+- name: Persist successful native stage
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/stages/{{ dify_stage }}.json"
+    content: "{{ {'completed': true, 'engine': 'ansible-native-v2', 'completedAt': dify_stage_time.stdout | trim} | to_json }}\n"
+    mode: '0600'

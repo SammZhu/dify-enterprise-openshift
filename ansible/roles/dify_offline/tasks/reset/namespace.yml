@@ -1,0 +1,30 @@
+---
+- name: Recheck full namespace inventory immediately before deletion
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inventory.yml"
+  when: dify_reset_ns is not none and dify_reset_ns.metadata.deletionTimestamp is not defined
+
+- name: Refuse a changed namespace inventory or backing-volume policy
+  ansible.builtin.assert:
+    that:
+      - dify_reset_object_records == dify_reset_plan.objects
+      - dify_reset_volumes | sort(attribute='name') == dify_reset_plan.volumes
+    quiet: true
+  when: dify_reset_ns is not none and dify_reset_ns.metadata.deletionTimestamp is not defined
+
+- name: Delete only the confirmed namespace UID without finalizer overrides
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['delete', '--raw', '/api/v1/namespaces/dify', '-f', '-'] }}"
+    stdin: "{{ {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions': {'uid': dify_reset_plan.namespaceUID}, 'propagationPolicy': 'Foreground'} | to_json }}"
+  when: dify_reset_ns is not none and dify_reset_ns.metadata.deletionTimestamp is not defined
+
+- name: Wait for namespace deletion and normal storage reclamation
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', '--for=delete', 'namespace/dify', '--timeout=600s'] }}"
+  changed_when: false
+  when: dify_reset_ns is not none
+
+- name: Record completed namespace phase
+  ansible.builtin.copy:
+    dest: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/namespace.json"
+    content: '{"completed": true}'
+    mode: '0600'

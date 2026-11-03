@@ -1,0 +1,78 @@
+---
+- name: Require the namespace to be gone before resetting host data
+  ansible.builtin.assert:
+    that: dify_reset_ns is none
+    quiet: true
+
+- name: Inspect completion marker for this host-data phase
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/host-data.json"
+  register: dify_host_reset_done
+
+- name: Reset reviewed host state once
+  when: not dify_host_reset_done.stat.exists
+  block:
+    - name: Stop and disable the exactly verified boot unit for a full reset
+      ansible.builtin.systemd_service:
+        name: dify-offline-services.service
+        enabled: false
+        state: stopped
+      become: true
+      when: customer_reset_mode == 'full' and dify_reset_unit.stat.exists
+
+    - name: Remove only the verified dedicated unit
+      ansible.builtin.file:
+        path: /etc/systemd/system/dify-offline-services.service
+        state: absent
+      become: true
+      when: customer_reset_mode == 'full'
+
+    - name: Reload systemd after removing the unit
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      become: true
+      when: customer_reset_mode == 'full'
+
+    - name: Stop reviewed containers by immutable ID
+      ansible.builtin.command:
+        argv: "{{ dify_podman + ['stop', '--time=30', item.value.Id] }}"
+      become: true
+      loop: "{{ dify_service_containers | dict2items }}"
+      when: customer_reset_mode == 'full' or item.key != 'dify-offline-registry'
+      no_log: true
+
+    - name: Remove reviewed containers without volume or image pruning
+      ansible.builtin.command:
+        argv: "{{ dify_podman + ['rm', item.value.Id] }}"
+      become: true
+      loop: "{{ dify_service_containers | dict2items }}"
+      when: customer_reset_mode == 'full'
+      no_log: true
+
+    - name: Recheck data directory and mount identities immediately before clearing
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inspect.yml"
+
+    - name: Validate the frozen scope again after stopping services
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/validate.yml"
+
+    # find does not follow symlinks. GNU rm refuses traversal across a mounted
+    # filesystem. Directory inode and all nested mounts were checked above.
+    - name: Clear only immediate children of each verified data directory
+      ansible.builtin.command:
+        argv: [find, -P, "{{ item.value.path }}", -mindepth, '1', -maxdepth, '1', -exec, rm, -rf, --one-file-system, --, '{}', '+']
+      become: true
+      loop: "{{ dify_reset_plan.directories | dict2items }}"
+      loop_control:
+        label: "{{ item.value.path }}"
+
+    - name: Restore S3 before the wheel proxy after an application-only reset
+      ansible.builtin.command:
+        argv: "{{ dify_podman + ['start', dify_reset_plan.containers['dify-offline-s3'], dify_reset_plan.containers['dify-offline-pypi']] }}"
+      become: true
+      when: customer_reset_mode == 'application'
+
+    - name: Record completed host-data phase
+      ansible.builtin.copy:
+        dest: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/host-data.json"
+        content: '{"completed": true}'
+        mode: '0600'

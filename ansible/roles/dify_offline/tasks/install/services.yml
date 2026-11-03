@@ -1,0 +1,59 @@
+---
+- name: Select services for this customer storage topology
+  ansible.builtin.set_fact:
+    dify_service_names: "{{ (['dify-offline-s3'] if dify_cfg.offline.localS3.enabled | bool else []) + ['dify-offline-registry', 'dify-offline-pypi'] }}"
+
+- name: Prepare stable private TLS and credentials
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/service-identity.yml"
+
+- name: Inspect all named containers before creating or starting services
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/service-inventory.yml"
+
+- name: Refuse partial running service sets
+  ansible.builtin.assert:
+    that: dify_service_containers | length in [0, dify_service_names | length] or dify_service_containers.values() | map(attribute='State.Status') | unique | list == ['created']
+    fail_msg: Partial services have started previously; inspect them before recovery.
+    quiet: true
+
+- name: Remove only owned never-started partial containers without deleting volumes
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['rm', item.value.Id] }}"
+  become: true
+  loop: "{{ dify_service_containers | dict2items }}"
+  when: dify_service_containers | length not in [0, dify_service_names | length]
+  no_log: true
+
+- name: Create new services without pulling images or replacing existing data
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/service-create.yml"
+  when: dify_service_containers | length != dify_service_names | length
+
+- name: Start S3 before the nginx proxy and registry
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['start'] + dify_service_names }}"
+  become: true
+
+- name: Verify TLS endpoints and anonymous S3 denial
+  ansible.builtin.uri:
+    url: "https://{{ dify_cfg.offline.registry.split(':')[0] }}:{{ item.port }}{{ item.path }}"
+    ca_path: "{{ dify_state }}/certificates/ca.crt"
+    validate_certs: true
+    use_proxy: false
+    headers: "{{ {'Authorization': 'Basic ' + dify_registry_auth.auths[dify_cfg.offline.registry].auth} if item.path == '/v2/' else {} }}"
+    status_code: "{{ item.status }}"
+  loop:
+    - {port: "{{ dify_cfg.offline.registry.split(':')[1] }}", path: /v2/, status: 200}
+    - {port: "{{ dify_cfg.offline.pipMirror | urlsplit('port') }}", path: /simple/, status: 200}
+    - {port: "{{ dify_cfg.offline.localS3.port }}", path: /, status: 403}
+  when: item.path != '/' or dify_cfg.offline.localS3.enabled | bool
+  register: dify_endpoint
+  until: dify_endpoint is succeeded
+  retries: 30
+  delay: 2
+  no_log: true
+
+- name: Install boot recovery using the native unit tasks
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/service-autostart.yml"
+  vars:
+    dify_service_host: "{{ inventory_hostname }}"
+    dify_service_state: "{{ dify_state }}"
+    dify_service_bundle: "{{ dify_bundle }}"

@@ -1,0 +1,119 @@
+---
+- name: Select customer reset paths and explicit clients
+  ansible.builtin.set_fact:
+    customer_mode: install
+    dify_root: "{{ customer_state_root }}"
+    dify_bundle: "{{ customer_bundle_dir }}"
+    dify_state: "{{ customer_state_root }}/state"
+    dify_podman: [podman, --cgroup-manager=cgroupfs]
+    dify_run_id: "{{ customer_reset_run_id if customer_reset_run_id | length > 0 else lookup('password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+    dify_oc: ["{{ customer_bundle_dir }}/bin/oc", --kubeconfig, "{{ customer_kubeconfig }}", --context, "{{ customer_context }}", '--request-timeout=60s']
+
+- name: Require dedicated paths and explicit deletion scope
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/paths.yml"
+
+- name: Validate reset arguments
+  ansible.builtin.assert:
+    that:
+      - customer_reset_mode in ['application', 'full']
+      - dify_run_id is match('^[A-Za-z0-9-]{12,80}$')
+      - customer_context | length > 0
+      - customer_kubeconfig is match('^/')
+    quiet: true
+
+- name: Read and validate live reset inputs even in check mode
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inspect.yml"
+  args:
+    apply:
+      check_mode: false
+
+- name: Read or construct the reviewed plan
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/plan.yml"
+  args:
+    apply:
+      check_mode: false
+
+- name: Show exact reset scope and confirmation hash
+  ansible.builtin.debug:
+    msg:
+      mode: "{{ dify_reset_plan.mode }}"
+      cluster: "{{ dify_reset_plan.identity }}"
+      namespace_uid: "{{ dify_reset_plan.namespaceUID }}"
+      objects: "{{ dify_reset_plan.objects }}"
+      volumes: "{{ dify_reset_plan.volumes }}"
+      containers: "{{ dify_reset_plan.containers }}"
+      directories: "{{ dify_reset_plan.directories }}"
+      confirmation: "{{ dify_reset_plan.confirmation }}"
+      run_id: "{{ dify_run_id }}"
+      retained: Sealed media, CA/credentials, cluster resources and image caches.
+      next: Review this plan; execution needs customer_reset_execute=true and the exact customer_reset_confirm hash.
+
+- name: Execute only the explicitly confirmed plan
+  when: customer_reset_execute | bool and not ansible_check_mode
+  block:
+    - name: Require the exact reviewed confirmation
+      ansible.builtin.assert:
+        that: customer_reset_confirm == dify_reset_plan.confirmation
+        quiet: true
+
+    - name: Acquire the installer's state lease atomically
+      ansible.builtin.command:
+        argv: [mkdir, -m, '0700', "{{ dify_root }}/.ansible-run"]
+      register: dify_lease
+
+    - name: Record reset lease ownership
+      ansible.builtin.copy:
+        content: "{{ {'runId': dify_run_id} | to_json }}\n"
+        dest: "{{ dify_root }}/.ansible-run/owner.json"
+        mode: '0600'
+
+    - name: Recheck live identities after obtaining the lease
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inspect.yml"
+
+    - name: Refuse a changed target or host before recording the plan
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/validate.yml"
+
+    - name: Inspect the requested reset journal
+      ansible.builtin.stat:
+        path: "{{ dify_root }}/reset-runs/{{ dify_run_id }}"
+        follow: false
+      register: dify_reset_journal
+
+    - name: Refuse journal reuse without explicit resume
+      ansible.builtin.assert:
+        that:
+          - customer_reset_resume | bool or not dify_reset_journal.stat.exists
+          - not dify_reset_journal.stat.islnk | default(false)
+        quiet: true
+
+    - name: Create private reset journal
+      ansible.builtin.file:
+        path: "{{ dify_root }}/reset-runs/{{ dify_run_id }}"
+        state: directory
+        mode: '0700'
+
+    - name: Persist the confirmed plan once
+      ansible.builtin.copy:
+        dest: "{{ dify_root }}/reset-runs/{{ dify_run_id }}/plan.json"
+        content: "{{ dify_reset_plan | to_nice_json }}\n"
+        mode: '0600'
+        force: false
+
+    - name: Delete the reviewed namespace with a UID precondition
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/namespace.yml"
+
+    - name: Revalidate host ownership after namespace deletion
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/inspect.yml"
+
+    - name: Validate the resumed host phase
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/validate.yml"
+
+    - name: Reset only the reviewed host services and data
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/host-data.yml"
+
+    - name: Finish the reset and invalidate stale acceptance markers
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/finish.yml"
+  always:
+    - name: Release only this reset's state lease
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/release.yml"
+      when: dify_lease is defined and dify_lease is succeeded

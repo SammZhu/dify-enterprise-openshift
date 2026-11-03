@@ -1,0 +1,176 @@
+---
+- name: Require one host for registry, wheel index and S3 proxy
+  ansible.builtin.assert:
+    that:
+      - dify_cfg.offline.pipMirror | urlsplit('scheme') == 'https'
+      - dify_cfg.offline.pipMirror | urlsplit('hostname') == dify_cfg.offline.registry.split(':')[0]
+      - dify_cfg.offline.pipMirror | urlsplit('path') == '/simple/'
+      - ([dify_cfg.offline.registry.split(':')[1] | int, dify_cfg.offline.pipMirror | urlsplit('port') | int, dify_cfg.offline.localS3.port | int] | unique | length) == 3
+    quiet: true
+
+- name: Create persistent service directories
+  ansible.builtin.stat:
+    path: "{{ dify_state }}/{{ item }}"
+    follow: false
+  loop: [certificates, tls, auth, registry-data, s3-data]
+  register: dify_service_directory_stats
+
+- name: Refuse symlinked persistent service directories
+  ansible.builtin.assert:
+    that: not item.stat.islnk | default(false)
+    quiet: true
+  loop: "{{ dify_service_directory_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Create verified persistent service directories
+  ansible.builtin.file:
+    path: "{{ dify_state }}/{{ item }}"
+    state: directory
+    mode: '0700'
+  loop: [certificates, tls, auth, registry-data, s3-data]
+
+- name: Inspect retained TLS state
+  ansible.builtin.find:
+    paths: "{{ dify_state }}/certificates"
+    hidden: true
+    file_type: any
+  register: dify_tls_existing
+
+- name: Require all three supplied TLS files or none
+  ansible.builtin.assert:
+    that: ([customer_tls_cert, customer_tls_key, customer_tls_ca] | reject('equalto', '') | list | length) in [0, 3]
+    quiet: true
+
+- name: Install supplied TLS material without implicit rotation
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/service-tls-copy.yml"
+  loop:
+    - {source: "{{ customer_tls_cert }}", name: server.crt}
+    - {source: "{{ customer_tls_key }}", name: server.key}
+    - {source: "{{ customer_tls_ca }}", name: ca.crt}
+  loop_control:
+    loop_var: dify_tls_file
+  when: customer_tls_cert | length > 0
+
+- name: Create a new local CA and leaf only when TLS state is entirely empty
+  when: customer_tls_cert | length == 0 and dify_tls_existing.matched == 0
+  block:
+    - name: Generate local CA with explicit CA constraints
+      ansible.builtin.command:
+        argv: [openssl, req, -x509, -newkey, 'rsa:3072', -nodes, -days, '365', -keyout, "{{ dify_state }}/certificates/ca.key", -out, "{{ dify_state }}/certificates/ca.crt", -subj, '/CN=Dify Offline CA', -addext, 'basicConstraints=critical,CA:TRUE']
+      no_log: true
+
+    - name: Generate service private key and CSR
+      ansible.builtin.command:
+        argv: [openssl, req, -new, -newkey, 'rsa:3072', -nodes, -keyout, "{{ dify_state }}/certificates/server.key", -out, "{{ dify_state }}/certificates/server.csr", -subj, "/CN={{ dify_cfg.offline.registry.split(':')[0] }}"]
+      no_log: true
+
+    - name: Set service certificate constraints
+      ansible.builtin.copy:
+        dest: "{{ dify_state }}/certificates/server.ext"
+        mode: '0600'
+        content: |
+          subjectAltName=DNS:{{ dify_cfg.offline.registry.split(':')[0] }}
+          basicConstraints=critical,CA:FALSE
+          extendedKeyUsage=serverAuth
+
+    - name: Sign service certificate
+      ansible.builtin.command:
+        argv: [openssl, x509, -req, -days, '365', -in, "{{ dify_state }}/certificates/server.csr", -CA, "{{ dify_state }}/certificates/ca.crt", -CAkey, "{{ dify_state }}/certificates/ca.key", -CAcreateserial, -extfile, "{{ dify_state }}/certificates/server.ext", -out, "{{ dify_state }}/certificates/server.crt"]
+      no_log: true
+
+- name: Protect every TLS file
+  ansible.builtin.file:
+    path: "{{ dify_state }}/certificates/{{ item }}"
+    mode: '0600'
+  loop: [server.key, server.crt, ca.crt]
+
+- name: Verify CA trust, service DNS and certificate validity
+  ansible.builtin.command:
+    argv: [openssl, verify, -CAfile, "{{ dify_state }}/certificates/ca.crt", -verify_hostname, "{{ dify_cfg.offline.registry.split(':')[0] }}", "{{ dify_state }}/certificates/server.crt"]
+  changed_when: false
+
+- name: Inspect retained authentication files
+  ansible.builtin.stat:
+    path: "{{ dify_state }}/{{ item }}"
+  loop: [auth.json, htpasswd, local-s3.json]
+  register: dify_auth_existing
+
+- name: Refuse orphaned registry authentication
+  ansible.builtin.assert:
+    that: dify_auth_existing.results[0].stat.exists or not dify_auth_existing.results[1].stat.exists
+    quiet: true
+
+- name: Generate initial registry credential without exposing plaintext argv
+  when: not dify_auth_existing.results[0].stat.exists
+  block:
+    - name: Allocate registry credential in controller memory
+      ansible.builtin.set_fact:
+        dify_registry_password: "{{ lookup('password', '/dev/null', length=64, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Hash registry password using bcrypt through stdin
+      ansible.builtin.command:
+        argv: [htpasswd, -niB, offline]
+        stdin: "{{ dify_registry_password }}"
+      register: dify_bcrypt
+      no_log: true
+
+    - name: Require valid bcrypt output
+      ansible.builtin.assert:
+        that: dify_bcrypt.stdout is match('^offline:\$2[aby]\$')
+        quiet: true
+      no_log: true
+
+    - name: Persist bcrypt verifier
+      ansible.builtin.copy:
+        dest: "{{ dify_state }}/htpasswd"
+        content: "{{ dify_bcrypt.stdout }}\n"
+        mode: '0600'
+      no_log: true
+
+    - name: Persist registry authentication for Podman and OpenShift
+      ansible.builtin.copy:
+        dest: "{{ dify_state }}/auth.json"
+        content: "{{ {'auths': {dify_cfg.offline.registry: {'auth': ('offline:' + dify_registry_password) | b64encode}}} | to_nice_json }}\n"
+        mode: '0600'
+      no_log: true
+
+- name: Generate stable S3 credentials once
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/local-s3.json"
+    mode: '0600'
+    content: "{{ {'bucket': dify_cfg.offline.localS3.bucket, 'accessKey': 'dify' + lookup('password', '/dev/null', length=24, chars=['ascii_letters', 'digits']), 'secretKey': lookup('password', '/dev/null', length=64, chars=['ascii_letters', 'digits'])} | to_nice_json }}\n"
+  when: dify_cfg.offline.localS3.enabled | bool and not dify_auth_existing.results[2].stat.exists
+  no_log: true
+
+- name: Read stable registry and S3 identities
+  ansible.builtin.slurp:
+    src: "{{ dify_state }}/{{ item }}"
+  loop: "{{ ['auth.json'] + (['local-s3.json'] if dify_cfg.offline.localS3.enabled | bool else []) }}"
+  register: dify_auth_contents
+  no_log: true
+
+- name: Decode private service identities
+  ansible.builtin.set_fact:
+    dify_registry_auth: "{{ dify_auth_contents.results[0].content | b64decode | from_json }}"
+    dify_s3_identity: "{{ dify_auth_contents.results[1].content | b64decode | from_json if dify_cfg.offline.localS3.enabled | bool else {} }}"
+  no_log: true
+
+- name: Require retained S3 identity to match this bucket
+  ansible.builtin.assert:
+    that: not dify_cfg.offline.localS3.enabled | bool or dify_s3_identity.bucket == dify_cfg.offline.localS3.bucket
+    quiet: true
+  no_log: true
+
+- name: Prepare private container credential and TLS mounts
+  ansible.builtin.copy:
+    src: "{{ dify_state }}/{{ item.src }}"
+    dest: "{{ dify_state }}/{{ item.dest }}"
+    remote_src: true
+    mode: '0600'
+  loop:
+    - {src: certificates/server.crt, dest: tls/server.crt}
+    - {src: certificates/server.key, dest: tls/server.key}
+    - {src: htpasswd, dest: auth/htpasswd}
+  no_log: true

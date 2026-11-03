@@ -1,0 +1,43 @@
+---
+- name: Require dedicated absolute work and bundle paths
+  ansible.builtin.assert:
+    that:
+      - dify_root is match('^/[A-Za-z0-9_./-]+$')
+      - "'..' not in dify_root.split('/')"
+      - dify_root.split('/') | reject('equalto', '') | list | length >= 3
+      - dify_root not in ['/var/lib', '/var/tmp', '/usr/local', '/mnt/high-side-data', '/mnt/low-side-data']
+      - "'..' not in dify_bundle.split('/')"
+      - dify_bundle is match('^/[A-Za-z0-9_./-]+$')
+      - customer_mode != 'prepare' or not (dify_root == customer_source_dir or dify_root.startswith(customer_source_dir + '/') or customer_source_dir.startswith(dify_root + '/'))
+      - customer_mode != 'install' or not (dify_root == dify_bundle or dify_root.startswith(dify_bundle + '/'))
+    quiet: true
+
+- name: Inspect each state path ancestor without following symlinks
+  ansible.builtin.stat:
+    path: "{{ '/' + dify_root.split('/')[1:ancestor_depth] | join('/') }}"
+    follow: false
+  loop: "{{ range(2, dify_root.split('/') | length + 1) | list }}"
+  loop_control:
+    loop_var: ancestor_depth
+  register: dify_path_ancestors
+
+- name: Reject symlinked state ancestors
+  ansible.builtin.assert:
+    that: not item.stat.islnk | default(false)
+    quiet: true
+  loop: "{{ dify_path_ancestors.results }}"
+  loop_control:
+    label: "{{ item.stat.path | default('absent ancestor') }}"
+
+- name: Detect Git checkouts in state ancestors
+  ansible.builtin.stat:
+    path: "{{ '/' + dify_root.split('/')[1:ancestor_depth] | join('/') }}/.git"
+  loop: "{{ range(1, dify_root.split('/') | length + 1) | list }}"
+  loop_control:
+    loop_var: ancestor_depth
+  register: dify_git_ancestors
+
+- name: Refuse private state inside Git
+  ansible.builtin.assert:
+    that: dify_git_ancestors.results | selectattr('stat.exists') | list | length == 0
+    quiet: true
