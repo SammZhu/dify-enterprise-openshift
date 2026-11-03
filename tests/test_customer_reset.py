@@ -81,6 +81,61 @@ class ResetTests(unittest.TestCase):
         owned['metadata']['labels']={}
         self.assertIn('Deployment/dify-api',r.classify(objects,expected,set()))
 
+
+    def test_ownerless_endpoints_follow_owned_service_selector_and_pod_identity(self):
+        service=obj('Service','dify-postgresql',labels={'demo.redhat.com/application':'dify-enterprise'})
+        service['spec']={'selector':{'app':'dify-postgresql'}}
+        deploy=obj('Deployment','dify-db',labels={'demo.redhat.com/application':'dify-enterprise'})
+        pod=obj('Pod','dify-postgresql-0',labels={'app':'dify-postgresql'},owner=deploy['metadata']['uid'])
+        pod['status']={'podIP':'10.0.0.10'}
+        endpoint=obj('Endpoints','dify-postgresql',uid='endpoint-fixture')
+        endpoint['subsets']=[{'addresses':[{'ip':'10.0.0.10','targetRef':{'kind':'Pod','name':pod['metadata']['name'],
+                              'uid':pod['metadata']['uid'],'namespace':'dify'}}]}]
+        expected={('', 'Service','dify-postgresql'),('', 'Deployment','dify-db')}
+        objects=[endpoint,pod,deploy,service]
+        self.assertEqual(r.classify(objects,expected,set()),[])
+        endpoint['subsets'][0]['notReadyAddresses']=endpoint['subsets'][0].pop('addresses')
+        self.assertEqual(r.classify(objects,expected,set()),[])
+        endpoint['subsets']=[]
+        self.assertEqual(r.classify(objects,expected,set()),[])
+
+    def test_external_or_mismatched_endpoints_are_never_whitelisted_by_name(self):
+        service=obj('Service','dify-postgresql',labels={'demo.redhat.com/application':'dify-enterprise'})
+        service['spec']={'selector':{'app':'dify-postgresql'}}
+        endpoint=obj('Endpoints','dify-postgresql',uid='endpoint-fixture')
+        expected={('', 'Service','dify-postgresql')}
+        self.assertEqual(r.classify([service,endpoint],expected,set()),[])
+        for change in ('foreign-service','no-selector','foreign-manager','foreign-pod','wrong-namespace'):
+            svc=copy.deepcopy(service); ep=copy.deepcopy(endpoint)
+            if change=='foreign-service':svc['metadata']['labels']={}
+            elif change=='no-selector':svc['spec']['selector']={}
+            elif change=='foreign-manager':ep['metadata']['labels']={'endpoints.kubernetes.io/managed-by':'another-controller'}
+            elif change=='wrong-namespace':ep['metadata']['namespace']='another-project'
+            else:ep['subsets']=[{'addresses':[{'ip':'10.0.0.99','targetRef':{'kind':'Pod','uid':'foreign','name':'foreign'}}]}]
+            with self.subTest(change=change):self.assertIn('Endpoints/dify-postgresql',r.classify([svc,ep],expected,set()))
+
+    def lease_objects(self):
+        name='dify-dify-enterprise-crd-controller'
+        deploy=obj('Deployment',name,labels={'demo.redhat.com/application':'dify-enterprise'})
+        deploy['apiVersion']='apps/v1'
+        rs=obj('ReplicaSet',name+'-fixture',owner=deploy['metadata']['uid']);rs['apiVersion']='apps/v1'
+        pod=obj('Pod',name+'-fixture-pod',owner=rs['metadata']['uid'])
+        lease=obj('Lease','40c5ee95.dify.ai');lease['apiVersion']='coordination.k8s.io/v1'
+        lease['spec']={'holderIdentity':pod['metadata']['name']+'_11111111-2222-4333-8444-555555555555'}
+        return [lease,pod,rs,deploy],{('apps','Deployment',name)}
+
+    def test_dify_lease_requires_an_owned_crd_controller_holder_chain(self):
+        objects,expected=self.lease_objects()
+        self.assertEqual(r.classify(objects,expected,set()),[])
+        for change in ('missing-holder','foreign-holder','wrong-lease','wrong-namespace','malformed-nonce','not-crd-controller'):
+            items=copy.deepcopy(objects)
+            if change=='missing-holder':items=items[:1]+items[2:]
+            elif change=='foreign-holder':items[0]['spec']['holderIdentity']='foreign_11111111-2222-4333-8444-555555555555'
+            elif change=='wrong-lease':items[0]['metadata']['name']='another-election'
+            elif change=='wrong-namespace':items[0]['metadata']['namespace']='another-project'
+            elif change=='malformed-nonce':items[0]['spec']['holderIdentity']=items[1]['metadata']['name']+'_not-a-uuid'
+            else:items[3]['metadata']['name']='dify-web';expected={('apps','Deployment','dify-web')}
+            with self.subTest(change=change):self.assertTrue(any(i.startswith('Lease/') for i in r.classify(items,expected,set())))
     def test_application_plan_is_read_only_and_hash_changes_with_mode_or_namespace(self):
         with tempfile.TemporaryDirectory() as td:
             f=Fixture(Path(td)); plan=f.plan()
@@ -274,7 +329,7 @@ with pathlib.Path(data['log']).open('a') as f:f.write(json.dumps([pathlib.Path(s
 if pathlib.Path(sys.argv[0]).name=='oc':
  op=next(a for a in args if a in ('get','api-resources','delete','wait'))
  tail=args[args.index(op)+1:]
- if op=='api-resources':print('configmaps');sys.exit(0)
+ if op=='api-resources':print('configmaps services statefulsets.apps deployments.apps replicasets.apps pods endpoints leases.coordination.k8s.io');sys.exit(0)
  if op!='get':raise RuntimeError('preview attempted mutation')
  resource=tail[0]
  if resource=='clusterversion':out={'spec':{'clusterID':'fixture-cluster'}}
@@ -282,6 +337,20 @@ if pathlib.Path(sys.argv[0]).name=='oc':
  elif resource=='namespace':out={'metadata':{'uid':'fixture-ns'}}
  elif resource=='configmap':out={'data':{'installer':'offline-v1','lockSHA256':data['lockSHA256']}}
  elif resource=='configmaps':out={'items':[{'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'dify-offline-install','uid':'fixture-marker'}}]}
+ elif resource in ('services','statefulsets.apps','deployments.apps','replicasets.apps','pods','endpoints','leases.coordination.k8s.io'):
+  def item(kind,name,uid,api='v1',owner=None,labels=None,annotations=None):
+   return {'apiVersion':api,'kind':kind,'metadata':{'name':name,'uid':uid,'namespace':'dify','labels':labels or {},'annotations':annotations or {},'ownerReferences':[{'uid':owner}] if owner else []}}
+  name='dify-dify-enterprise-crd-controller'
+  service=item('Service','dify-postgresql','svc',labels={'demo.redhat.com/application':'dify-enterprise'});service['spec']={'selector':{'app':'dify-postgresql'}}
+  db=item('StatefulSet','dify-postgresql','db','apps/v1',labels={'demo.redhat.com/application':'dify-enterprise'})
+  dbpod=item('Pod','dify-postgresql-0','dbpod',owner='db',labels={'app':'dify-postgresql'});dbpod['status']={'podIP':'10.0.0.10'}
+  controller=item('Deployment',name,'controller','apps/v1',annotations={'meta.helm.sh/release-name':'dify','meta.helm.sh/release-namespace':'dify'})
+  rs=item('ReplicaSet',name+'-fixture','rs','apps/v1',owner='controller')
+  pod=item('Pod',name+'-fixture-pod','controller-pod',owner='rs')
+  ep=item('Endpoints','dify-postgresql','endpoint',labels={'endpoints.kubernetes.io/managed-by':'endpoint-controller'})
+  ep['subsets']=[{'addresses':[{'ip':'10.0.0.10','targetRef':{'kind':'Pod','name':'dify-postgresql-0','uid':'dbpod','namespace':'dify'}}]}]
+  lease=item('Lease','40c5ee95.dify.ai','leader-lease','coordination.k8s.io/v1');lease['spec']={'holderIdentity':pod['metadata']['name']+'_11111111-2222-4333-8444-555555555555'}
+  out={'items':{'services':[service],'statefulsets.apps':[db],'deployments.apps':[controller],'replicasets.apps':[rs],'pods':[dbpod,pod],'endpoints':[ep],'leases.coordination.k8s.io':[lease]}[resource]}
  else:raise RuntimeError('unexpected resource: '+resource)
  print(json.dumps(out))
 else:

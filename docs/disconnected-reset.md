@@ -190,6 +190,12 @@ RHDP 应使用原私有配置（如有则继续加 `-e @/原私有路径/profile
 
 清理前会检查安装绑定、匹配的安装标记、命名空间内资源归属、容器标签/ID/挂载、专用单元内容和数据目录身份。无法识别的外来资源、其他容器共享数据目录、数据目录本身为符号链接或其下存在嵌套挂载等情况需要先由管理员核实，不会被当作“可忽略错误”跳过。命名空间删除带 UID 前置条件；实现依据见 [Kubernetes delete CLI](https://github.com/kubernetes/kubectl/blob/master/pkg/cmd/delete/delete.go)。
 
+### 自动生成资源的归属
+
+自动生成资源不一定带 `ownerReferences`。无该引用的 core/v1 Endpoints 只有在同名 Service 已归属本安装、Service 有 selector、后端地址的 Pod UID/名称/命名空间/IP 及标签都匹配时才会被接受；空后端也必须关联这个已确认的 selector Service。其他管理器标记、手工外部后端或外来 Pod 仍会阻止清理。字段依据见 [Kubernetes Endpoints 控制器](https://github.com/kubernetes/kubernetes/blob/v1.33.0/pkg/controller/endpoint/endpoints_controller.go)。
+
+Dify 3.9.8 CRD 控制器的 `40c5ee95.dify.ai` Lease，需将 `holderIdentity` 中的 Pod 名称匹配到已归属 Pod，并沿 Pod → ReplicaSet → Chart 中的 CRD 控制器 Deployment 核对。只有名称相同、持有者未知、Pod 已消失或属于其他工作负载时，不会直接放行；可先等待控制器就绪后重新预览。身份格式参考 [controller-runtime 选主实现](https://github.com/kubernetes-sigs/controller-runtime/blob/v0.20.4/pkg/leaderelection/leader_election.go)。
+
 ## 验证边界
 
 清理逻辑通过临时目录与模拟集群/Podman 边界验证；本轮没有在真实客户或 Demo 集群执行破坏性清理与重装。它也不能自动证明独立于缓存的冷启动、存储物理擦除或完整业务验收。
