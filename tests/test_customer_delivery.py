@@ -1,6 +1,7 @@
 """Customer media, explicit cluster binding, and provider-free phase regressions."""
 import importlib
 import json
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -36,6 +37,10 @@ class CustomerTests(unittest.TestCase):
             self.assertEqual(cfg['components']['postgresql']['storage']['storageClassName'], 'customer-csi')
             self.assertEqual(cfg['offline']['localS3']['port'], 9544)
             self.assertEqual(w.oc_args()[-2:], ['--context', 'explicit-customer'])
+            # The startup helper uses python3, so it must see the controller venv
+            # and its packaged YAML dependency even without shell activation.
+            interpreter = w.call(['python3', '-c', 'import sys,yaml; print(sys.prefix)'], 'fixture', capture=True)
+            self.assertEqual(interpreter.strip(), sys.prefix)
             with self.assertRaisesRegex(ValueError, 'does not manage AWS'): w.network()
 
     def test_state_cannot_modify_system_root_bundle_or_git(self):

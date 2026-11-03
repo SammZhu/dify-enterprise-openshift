@@ -1,11 +1,22 @@
 ---
-# Copy outside the source tree; replace all example values.
+# 在联网制作机复制到 /root/dify-private/prepare.yml 后填写；不要修改公共默认值。
+# 详细说明：docs/customer-quickstart.md 第 1 步。不要提交客户配置或凭证。
+
+# 联网制作机：介质工作目录的绝对路径；放在源码目录之外，预留足够磁盘空间。
 customer_media_root: /var/tmp/dify-customer-media
+# 联网制作机：已存在的源镜像认证 JSON，权限 0600；不会自动打入交付包。
 customer_source_authfile: /root/dify-private/source-auth.json
+# 客户目标集群：oc get clusterversion version 查询实际补丁版本；用于下载匹配 oc。
 customer_ocp_version: '4.20.8'
+# 客户目标集群：oc get ingress.config.openshift.io cluster 查询 apps 域，不含协议/端口/路径。
 customer_apps_domain: apps.cluster.customer.example.com
+# 离线 Podman 主机：稳定 DNS 名称，不是联网制作机地址，不含协议/端口/路径。
+# 必须可被该主机自身、所有集群节点和 Pod 解析并访问；默认端口 5000/9443/9444。
 customer_registry_host: registry.customer.example.com
+# 客户目标集群：oc get storageclass 选择实际可用名称，用于 PostgreSQL/Redis/Qdrant PVC。
+# gp3-csi 仅为示例；本流程不会安装存储驱动。
 customer_storage_class: gp3-csi
-# Optional approved .difypkg files and their complete runtime wheel dependency set:
+
+# 可选：联网制作机上审核后的 .difypkg 和完整运行依赖 wheels 目录。
 # customer_plugins_dir: /root/dify-private/plugins
 # customer_wheels_dir: /root/dify-private/plugin-wheels

@@ -59,7 +59,10 @@ class CustomerWorkflow(common.Workflow):
         common.bind_source(source)
         super().__init__({'workDir': str(root), 'remoteDir': str(root), 'clusterDir': str(root)})
         self.bundle = bundle
-        self.env['PATH'] = str(root / 'tools/bin') + ':' + str(bundle / 'bin') + ':' + os.environ['PATH']
+        # Shell helpers invoke python3: use the same venv as the Ansible module,
+        # whose PyYAML is carried in controller-wheels, rather than the OS Python.
+        self.env['PATH'] = ':'.join((str(root / 'tools/bin'), str(bundle / 'bin'),
+                                    str(Path(sys.executable).parent), os.environ['PATH']))
         if mode == 'prepare':
             self.env['REGISTRY_AUTH_FILE'] = params['source_authfile']
         else:
