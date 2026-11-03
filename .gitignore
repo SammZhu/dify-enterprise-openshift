@@ -39,3 +39,24 @@ __pycache__/
 *.pyc
 .venv/
 offline-venv/
+
+# RHDP cluster bootstrap state: installer assets, logs and registry credentials.
+/rhdp-state*/
+/rhdp-bootstrap*/
+install-config.yaml
+install-config.backup.json
+.openshift_install_state.json
+registry-password
+registry-auth.json
+node-debug-key
+node-debug-key.pub
+/dify-bootstrap*/
+/dify-state*/
+local-s3.json
+local-s3.env
+deployment-ready.json
+
+inventory.local.yml
+*.local.yml
+.ansible/
+kubeadmin-password

@@ -85,6 +85,12 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(offline.canonical_image("localhost/model:1"), "localhost/model:1")
         self.assertEqual(offline.canonical_image("registry.test:5000/api:1"), "registry.test:5000/api:1")
 
+    def test_image_id_accepts_real_podman_bare_sha_and_docker_prefix(self):
+        self.assertEqual(offline.canonical_image_id("a" * 64), "sha256:" + "a" * 64)
+        self.assertEqual(offline.canonical_image_id("sha256:" + "a" * 64), "sha256:" + "a" * 64)
+        for value in ("a" * 12, "sha256:not-hex", "z" * 64):
+            with self.assertRaises(ValueError): offline.canonical_image_id(value)
+
     def test_wheel_index_normalizes_names_and_includes_hashes(self):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
@@ -94,6 +100,26 @@ class UnitTests(unittest.TestCase):
             offline.wheel_index(td / "wheels", td / "simple")
             index = (td / "simple/my-package/index.html").read_text()
             self.assertIn("#sha256=" + offline.sha(wheel), index)
+
+    def test_wheel_files_are_readable_by_nginx_under_private_umask(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td); previous = os.umask(0o077)
+            try:
+                offline.wheel_index(None, root / "pypi/simple")
+            finally:
+                os.umask(previous)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((root / "pypi").stat().st_mode & 0o777, 0o755)
+            self.assertEqual((root / "pypi/simple/index.html").stat().st_mode & 0o777, 0o644)
+
+    def test_local_s3_rejects_port_conflicts_and_duplicate_storage_backends(self):
+        cfg = config(); cfg["components"]["objectStorage"]["enabled"] = False
+        cfg["offline"]["localS3"] = {"enabled": True, "image": "docker.io/chrislusf/seaweedfs:4.51", "bucket": "dify", "port": 9444}
+        offline.validate_config(cfg)
+        cfg["offline"]["localS3"]["port"] = 5000
+        with self.assertRaisesRegex(ValueError, "distinct"): offline.validate_config(cfg)
+        cfg["offline"]["localS3"]["port"] = 9444; cfg["components"]["objectStorage"]["enabled"] = True
+        with self.assertRaisesRegex(ValueError, "disable both"): offline.validate_config(cfg)
 
     def test_checksums_reject_changes_additions_and_plan_only(self):
         with tempfile.TemporaryDirectory() as td:
@@ -205,6 +231,16 @@ class RealChartTests(unittest.TestCase):
                 found += 1
         self.assertGreaterEqual(found, 4)
 
+    def test_local_s3_reaches_the_actual_chart_without_odf_or_minio_secrets(self):
+        cfg = copy.deepcopy(self.cfg); cfg["components"]["objectStorage"]["enabled"] = False
+        cfg["offline"]["localS3"] = {"enabled": True, "image": "docker.io/chrislusf/seaweedfs:4.51", "bucket": "dify", "port": 9444}
+        groups, values, _ = offline.render(cfg, self.chart)
+        self.assertNotIn("objectstorage", groups)
+        self.assertNotIn("@@secret:dify-minio/", yaml.safe_dump(values))
+        matches = [d for d in groups["dify-enterprise"] if d["kind"] == "ConfigMap" and "S3_ENDPOINT" in d.get("data", {})]
+        self.assertTrue(matches)
+        self.assertTrue(all(d["data"]["S3_ENDPOINT"] == "https://registry.offline.test:9444" for d in matches))
+
     def test_inventory_includes_runtime_bases_and_credential_init_image(self):
         refs = offline.images(list(self.groups.values())) | self.runtime
         self.assertIn("gcr.io/kaniko-project/executor:latest", refs)
@@ -247,13 +283,19 @@ class RealChartTests(unittest.TestCase):
             if cmd[0] == "podman":
                 if cmd[1:3] == ["image", "inspect"]:
                     iid = "sha256:" + hashlib.sha256(cmd[-1].encode()).hexdigest()
-                    return json.dumps([{"Id": iid, "Digest": iid, "Os": "linux", "Architecture": "amd64"}])
+                    return json.dumps([{"Id": iid.removeprefix("sha256:"), "Digest": iid, "Os": "linux", "Architecture": "amd64"}])
                 if cmd[1] == "save":
                     path = Path(cmd[cmd.index("-o") + 1])
+                    config = json.dumps({"architecture": "amd64", "os": "linux", "sourceGraphId": cmd[-1]}).encode()
+                    config_id = "sha256:" + hashlib.sha256(config).hexdigest()
+                    manifest = json.dumps({"schemaVersion": 2, "config": {"digest": config_id}, "layers": []}).encode()
+                    manifest_id = "sha256:" + hashlib.sha256(manifest).hexdigest()
                     with tarfile.open(path, "w") as tar:
-                        b = json.dumps({"manifests": [{"digest": "sha256:" + "b" * 64}]}).encode()
-                        info = tarfile.TarInfo("index.json"); info.size = len(b)
-                        tar.addfile(info, io.BytesIO(b))
+                        for name, raw in (("index.json", json.dumps({"manifests": [{"digest": manifest_id}]}).encode()),
+                                          ("blobs/sha256/" + manifest_id.split(":")[1], manifest),
+                                          ("blobs/sha256/" + config_id.split(":")[1], config)):
+                            info = tarfile.TarInfo(name); info.size = len(raw)
+                            tar.addfile(info, io.BytesIO(raw))
                 if cmd[1] == "build":
                     self.assertIn("--network=none", cmd)
                     self.assertIn("--pull=never", cmd)

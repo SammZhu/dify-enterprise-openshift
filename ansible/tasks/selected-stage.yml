@@ -1,0 +1,15 @@
+---
+- name: Transfer only the validated offline artifacts
+  ansible.builtin.include_tasks: transfer.yml
+  when: rhdp_selected_stage == 'transfer'
+
+- name: Execute one host-local phase
+  ansible.builtin.include_tasks: phase.yml
+  vars:
+    rhdp_stage: "{{ rhdp_selected_stage }}"
+    rhdp_side: "{{ 'jump' if rhdp_selected_stage in ['preflight', 'tools', 'prepare'] else 'highside' }}"
+  when: rhdp_selected_stage != 'transfer'
+
+- name: Enable boot recovery for the owned local services
+  ansible.builtin.include_tasks: services-autostart.yml
+  when: rhdp_selected_stage == 'services'

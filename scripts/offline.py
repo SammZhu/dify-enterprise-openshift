@@ -17,6 +17,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
+from urllib.parse import urlparse
 
 import yaml
 
@@ -35,8 +36,18 @@ def run(*cmd, data=None, env=None):
     p = subprocess.run([str(c) for c in cmd], input=data, text=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     if p.returncode:
+        detail = "inspect the command locally; stderr suppressed to protect credentials"
+        if os.environ.get("OFFLINE_LOG_DIR"):
+            directory = Path(os.environ["OFFLINE_LOG_DIR"])
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            log = directory / "last-error.log"
+            with log.open("w", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
+                output.write(p.stderr)
+            log.chmod(0o600)
+            detail = f"inspect private log {log}"
         raise RuntimeError(f"{Path(str(cmd[0])).name} {cmd[1]} failed (exit {p.returncode}); "
-                           "inspect the command locally; stderr suppressed to protect credentials")
+                           + detail)
     return p.stdout
 
 
@@ -95,6 +106,15 @@ def validate_config(cfg):
         raise ValueError("offline.platform must be linux/amd64 or linux/arm64")
     if not offline["pipMirror"].startswith("https://"):
         raise ValueError("use an HTTPS internal Python simple index")
+    local_s3 = offline.get("localS3", {})
+    if local_s3.get("enabled"):
+        if not local_s3.get("image") or not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", local_s3.get("bucket", "")):
+            raise ValueError("localS3 requires a fixed image and valid S3 bucket name")
+        ports = [int(offline["registry"].rsplit(":", 1)[1]), urlparse(offline["pipMirror"]).port or 443, local_s3.get("port", 9444)]
+        if any(not isinstance(p, int) or p < 1024 or p > 65535 for p in ports) or len(set(ports)) != 3:
+            raise ValueError("local registry, wheel and S3 ports must be distinct unprivileged ports")
+        if cfg["components"]["objectStorage"]["enabled"] or cfg["components"]["minio"]["enabled"]:
+            raise ValueError("localS3 replaces objectStorage/minio; disable both")
     cs = cfg["components"]
     for name in ("clusterMonitoring", "tracing", "logging"):
         if cs[name]["enabled"]:
@@ -154,6 +174,14 @@ def render(cfg, chart, components=COMPONENTS):
         "plugin_connector": {"imageRepoPrefix": f"{registry}/plugins", "imageRepoType": "docker",
                              "insecureImageRepo": False, "generatorConf": yaml.safe_dump(generator)},
     })
+    local_s3 = cfg["offline"].get("localS3", {})
+    if local_s3.get("enabled"):
+        host = registry.rsplit(":", 1)[0]
+        cv = merge(cv, {"persistence": {"type": "s3", "s3": {
+            "endpoint": f"https://{host}:{local_s3.get('port', 9444)}",
+            "accessKey": "@@secret:dify-local-s3/accessKey@@", "secretKey": "@@secret:dify-local-s3/secretKey@@",
+            "bucketName": local_s3["bucket"], "region": "us-east-1", "addressType": "",
+            "useAwsManagedIam": False, "useAwsS3": False}}})
     cv = merge(cv, cfg["offline"].get("chartValues", {}))
     if cv["global"]["marketplace"]["enabled"]:
         raise ValueError("chartValues must not re-enable the public Marketplace")
@@ -189,6 +217,33 @@ def canonical_image(reference):
     if "." not in first and ":" not in first and first != "localhost":
         return "docker.io/" + reference
     return reference
+
+
+def canonical_image_id(value):
+    if re.fullmatch(r"[a-f0-9]{64}", value):
+        value = "sha256:" + value
+    if not DIGEST.fullmatch(value):
+        raise ValueError("container runtime returned an invalid image ID")
+    return value
+
+
+def oci_identity(path):
+    """OCI conversion can change a Docker config digest; use the loadable ID."""
+    with tarfile.open(path) as archive:
+        index = json.load(archive.extractfile("index.json"))
+        if len(index["manifests"]) != 1:
+            raise ValueError("expected a single-platform OCI archive")
+        manifest_digest = index["manifests"][0]["digest"]
+        if not DIGEST.fullmatch(manifest_digest): raise ValueError("invalid OCI manifest digest")
+        raw = archive.extractfile("blobs/sha256/" + manifest_digest.split(":")[1]).read()
+        if hashlib.sha256(raw).hexdigest() != manifest_digest.split(":")[1]:
+            raise ValueError("OCI manifest content differs from its digest")
+        config_digest = json.loads(raw)["config"]["digest"]
+        if not DIGEST.fullmatch(config_digest): raise ValueError("invalid OCI config digest")
+        config = archive.extractfile("blobs/sha256/" + config_digest.split(":")[1]).read()
+        if hashlib.sha256(config).hexdigest() != config_digest.split(":")[1]:
+            raise ValueError("OCI config content differs from its digest")
+        return manifest_digest, config_digest
 
 
 def replace_text(text, mapping):
@@ -265,6 +320,12 @@ def wheel_index(wheels, destination):
         links = [f'<a href="{html.escape(f)}#sha256={sha(destination / package / f)}">{html.escape(f)}</a><br>' for f in files]
         (destination / package / "index.html").write_text("\n".join(links))
     (destination / "index.html").write_text("\n".join(f'<a href="{p}/">{p}</a><br>' for p in sorted(packages)))
+    # nginx workers must read public wheels even when preparation uses umask 077.
+    if destination.parent.name == "pypi":
+        destination.parent.chmod(0o755)
+    destination.chmod(0o755)
+    for path in destination.rglob("*"):
+        path.chmod(0o755 if path.is_dir() else 0o644)
 
 
 def seal(bundle):
@@ -312,6 +373,8 @@ def prepare(args):
     groups, cv, runtime = render(cfg, args.chart)
     refs = images(list(groups.values())) | runtime
     roles = {"registry": cfg["offline"]["registryImage"], "wheel-server": cfg["offline"]["wheelServerImage"]}
+    if cfg["offline"].get("localS3", {}).get("enabled"):
+        roles["object-store"] = cfg["offline"]["localS3"]["image"]
     refs.update(roles.values())
     bundle.mkdir()
     shutil.copytree(ROOT / "examples", bundle / "source/examples")
@@ -363,15 +426,11 @@ def prepare(args):
             expected = lock["platform"].split("/")[1]
             if info["Architecture"] != expected or info["Os"] != "linux":
                 raise ValueError(f"wrong image architecture: {entry['source']}")
-            entry.update(resolvedSource=reference, imageId=info["Id"])
+            entry.update(resolvedSource=reference, sourceImageId=canonical_image_id(info["Id"]))
             if info.get("Digest"):
                 entry["sourceRegistryDigest"] = info["Digest"]
-            run("podman", "save", "--format", "oci-archive", "-o", bundle / entry["archive"], info["Id"])
-            with tarfile.open(bundle / entry["archive"]) as archive:
-                index = json.load(archive.extractfile("index.json"))
-                if len(index["manifests"]) != 1:
-                    raise ValueError("expected a single-platform OCI archive")
-                entry["sourceDigest"] = index["manifests"][0]["digest"]
+            run("podman", "save", "--format", "oci-archive", "-o", bundle / entry["archive"], entry["sourceImageId"])
+            entry["sourceDigest"], entry["imageId"] = oci_identity(bundle / entry["archive"])
         lock["status"] = "exported"
         write(bundle / "images.lock.yaml", lock)
     seal(bundle)
@@ -520,6 +579,11 @@ def install(args):
     secret(args, ns, "offline-registry-pull", {".dockerconfigjson": auth}, "kubernetes.io/dockerconfigjson")
     secret(args, ns, "image-repo-secret", {".dockerconfigjson": auth, "config.json": auth}, "kubernetes.io/dockerconfigjson")
     secret(args, ns, "offline-registry-ca", {"ca.crt": Path(args.ca).read_text()})
+    if cfg["offline"].get("localS3", {}).get("enabled"):
+        s3 = json.loads((state / "local-s3.json").read_text())
+        if s3.get("bucket") != cfg["offline"]["localS3"]["bucket"]:
+            raise ValueError("local S3 state belongs to another bucket")
+        secret(args, ns, "dify-local-s3", {"accessKey": s3["accessKey"], "secretKey": s3["secretKey"]}, keep=True)
     secret(args, ns, "dify-offline-keys", {"appSecretKey": secrets.token_urlsafe(42),
                                            "innerApiKey": secrets.token_urlsafe(42),
                                            "dashboardSecretKey": secrets.token_urlsafe(42)}, keep=True)

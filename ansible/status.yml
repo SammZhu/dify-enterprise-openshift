@@ -1,0 +1,25 @@
+---
+- name: Read historical completion markers without modifying private state
+  hosts: jump
+  gather_facts: false
+  tasks:
+    - name: Read stage markers on both hosts
+      rhdp_phase:
+        stack: dify
+        side: "{{ item }}"
+        operation: status
+        settings:
+          workDir: "{{ rhdp_dify_work_dir }}"
+          remoteDir: "{{ rhdp_dify_remote_dir }}"
+          highside: "{{ rhdp_rsync_target }}"
+      delegate_to: "{{ inventory_hostname if item == 'jump' else rhdp_highside_host }}"
+      loop: [jump, highside]
+      register: rhdp_status
+      no_log: true
+
+    - name: Show only completed phase names
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ item.stages }}"
+      loop: "{{ rhdp_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"

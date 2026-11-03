@@ -2,7 +2,9 @@
 
 本路径不要求客户已有 Git、Harbor、Quay 或 OpenShift GitOps。联网侧准备一个固定版本的交付包；客户侧一台 Linux Podman 主机提供 TLS Registry 和 Python wheel 索引，通过本地 Helm Chart 安装到已运行的离线 OpenShift。
 
-**验证状态：已对官方 `dify-enterprise` 3.9.8 Chart 做真实渲染，并用模拟 Podman/OpenShift 边界验证导出、导入、安装与重复安装流程。尚未在真实断网集群完成端到端验收。License 离线激活和实际插件兼容性仍须与 Dify 及客户现场验证。不能把脚本测试通过等同于客户环境认证。**
+RHDP 已有离线集群时，可使用 [Dify 部署自动化入口](rhdp-dify-offline.md) 串联以下阶段。该入口使用 9443 wheel 端口，另提供 9444 TLS S3，以适配 Workshop 的现有 8443 mirror-registry。
+
+**验证状态：2026-11-02 已在真实 RHDP OpenShift Disconnected Workshop 的 OpenShift 4.20.8 上完成 Dify Enterprise 3.9.8 部署验收：19 个运行 Pod Ready、四个 PostgreSQL 数据库、Redis、集群内认证 TLS S3 写读删除及 HTTPS 入口检查通过。实测使用单机 rootful Podman、本地 S3 和 gp3-csi，详见 [实测记录](rhdp-dify-offline.md#实测记录)。该环境有代理出口限制及 AWS/RHUI 例外，并非物理断网；其他客户拓扑、4.21/ARM、License 离线激活、模型、插件及 RAG 尚未据此验收。**
 
 ## 1. 边界与前提
 
@@ -127,7 +129,7 @@ sha256sum dify-offline-customer-3.9.8.tar.gz > dify-offline-customer-3.9.8.tar.g
 
 不需要某个可选目录时，省略对应参数。输出目录必须不存在，失败后不要把部分导出的目录当作交付物；换新目录重试。
 
-`images.lock.yaml` 记录每个引用、实际解析地址、镜像 ID、单平台 OCI manifest digest，以及可取得的源 Registry digest；`plugins.lock.yaml` 记录插件包的 SHA256 和可读取的名称/版本元数据；`checksums.json` 覆盖 Chart、配置、源码、镜像归档、插件包、wheels 和附带工具。安装手册与验收清单也随包携带。`planned` 状态的清单会被 `verify`、`import` 和 `install` 拒绝。
+`images.lock.yaml` 记录每个引用、实际解析地址、原始 `sourceImageId`、归档实际加载用的 `imageId`、单平台 OCI manifest digest，以及可取得的源 Registry digest。Docker 转 OCI 可能改变 config 摘要，因此源 ID 与加载 ID 不要求相同；导出器会校验归档 manifest/config 的内容摘要。`plugins.lock.yaml` 记录插件包的 SHA256 和可读取的名称/版本元数据；`checksums.json` 覆盖 Chart、配置、源码、镜像归档、插件包、wheels 和附带工具。安装手册与验收清单也随包携带。`planned` 状态的清单会被 `verify`、`import` 和 `install` 拒绝。
 
 ## 3. 客户侧启动 Podman 服务
 
@@ -190,7 +192,9 @@ chmod 600 "$STATE/auth.json"
 
 Registry 未带认证时返回 `401` 是正常的 TLS 连通结果；wheel 索引应返回 HTML。进一步用 `curl --user offline` 交互认证确认 `/v2/` 返回 200。Registry 需要认证；wheel 索引提供内网只读下载，不启用匿名写入。
 
-服务脚本只加载包内的 Registry/nginx 镜像，不在线拉取。若同名容器已经存在，它会停止并提示检查，**不会删除已有 Registry 或存储**。重启现有服务用 `podman start dify-offline-registry dify-offline-pypi`。正式长期运行时由客户将容器纳入 Quadlet/systemd、证书续期和主机备份；`--restart` 本身不等同于已配置开机启动。
+服务脚本只加载包内的 Registry/nginx 镜像，不在线拉取。若同名容器已经存在，它会停止并提示检查，**不会删除已有 Registry 或存储**。重启现有服务用 `podman start dify-offline-registry dify-offline-pypi`。正式长期运行时由客户将容器纳入 Quadlet/systemd、证书续期和主机备份；`--restart` 本身不等同于已配置开机启动。RHDP Ansible 的 services 阶段会自动安装专属启动单元，详见 [主机重启恢复](rhdp-dify-offline.md#主机重启恢复)；通用 Shell 入口仍由客户配置相应的主机服务。
+
+wheel 服务端口从 `offline.pipMirror` 读取，可改成同一主机的 `https://<host>:9443/simple/`；必须与 Registry 端口及其他服务端口不同。目录中的公开 wheels 会设置为容器 nginx 用户可读，交付包外层和私有状态目录仍保留私有权限。
 
 ## 4. 导入镜像
 
@@ -305,6 +309,28 @@ offline:
 安装前由客户创建 namespace `dify`、`customer-s3` Secret 和 bucket；S3 CA 需纳入传入的 CA bundle。路径寻址等设置以实际 S3 服务及当前 Chart 验证为准。
 
 项目保留的 MinIO 公共镜像当前不能假设可下载。没有现成 S3 时，应先选择客户可取得、可支持的内网对象存储；不要直接开启旧 `minio` 示例并认为镜像一定可用。
+
+### 可选：同一 Podman 主机上的测试 S3
+
+没有 ODF/现成 S3 的实验环境可在封包前设置：
+
+```yaml
+components:
+  objectStorage:
+    enabled: false
+  minio:
+    enabled: false
+offline:
+  localS3:
+    enabled: true
+    image: docker.io/chrislusf/seaweedfs:4.51
+    port: 9444
+    bucket: dify
+```
+
+封包会携带这张额外镜像。服务脚本生成随机认证，保存在工程外的 `STATE/local-s3.json` / `local-s3.env`，通过同一证书的 nginx 提供 TLS 9444，内部 SeaweedFS 8333 及管理端口不发布。安装器从私有状态创建 Dify 所需的 S3 Secret。Registry、wheel、S3 端口必须互不冲突。持久化数据在 `STATE/s3-data`，应与认证一起保留和备份。
+
+这是单机演示配置，未声明客户生产 S3 支持认证；按实际客户对象存储验证 API、容量和恢复。镜像原始 UID/GID 也需要保留：本轮 RHDP 中 Sandbox 的文件所有权超出默认 rootless 映射范围，自动化入口在两侧一致使用 rootful Podman。通用交付应按客户的主机管理方式核定执行身份和用户命名空间映射。
 
 ## 8. 验收及故障定位
 

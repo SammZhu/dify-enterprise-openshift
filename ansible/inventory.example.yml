@@ -1,0 +1,14 @@
+# Run the controller ON the Workshop Jump. The highside SSH alias is provided by RHDP.
+all:
+  children:
+    jump:
+      hosts:
+        jump_host:
+          ansible_connection: local
+          ansible_python_interpreter: /usr/bin/python3
+    highside:
+      hosts:
+        highside_host:
+          ansible_host: highside
+          ansible_connection: ssh
+          ansible_python_interpreter: /usr/bin/python3

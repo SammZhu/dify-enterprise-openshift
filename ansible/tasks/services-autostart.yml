@@ -1,0 +1,61 @@
+---
+# The preceding services phase verifies every container's bundle ownership.
+- name: Manage only the Dify local-services boot unit on Highside
+  delegate_to: "{{ rhdp_highside_host }}"
+  become: true
+  block:
+    - name: Check whether a boot unit already exists
+      ansible.builtin.stat:
+        path: /etc/systemd/system/dify-offline-services.service
+      register: rhdp_boot_unit
+
+    - name: Check existing unit ownership without returning its content
+      ansible.builtin.command:
+        argv:
+          - grep
+          - -Fqx
+          - '# Managed by dify-enterprise-openshift Ansible'
+          - /etc/systemd/system/dify-offline-services.service
+      register: rhdp_boot_owner
+      changed_when: false
+      failed_when: false
+      when: rhdp_boot_unit.stat.exists
+      no_log: true
+
+    - name: Refuse to replace an unmanaged boot unit
+      ansible.builtin.assert:
+        that: not rhdp_boot_unit.stat.exists or rhdp_boot_owner.rc | default(1) == 0
+        fail_msg: Existing dify-offline-services.service is unmanaged; inspect it before proceeding.
+        quiet: true
+
+    - name: Stage the dedicated boot unit with explicit mount dependencies
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/templates/dify-offline-services.service.j2"
+        dest: "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Validate the staged unit before installing it
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemd-analyze
+          - verify
+          - "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+      changed_when: false
+
+    - name: Install the validated boot unit
+      ansible.builtin.copy:
+        src: "{{ rhdp_settings.remoteDir }}/state/dify-offline-services.service"
+        dest: /etc/systemd/system/dify-offline-services.service
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start only the three owned Dify services
+      ansible.builtin.systemd_service:
+        name: dify-offline-services.service
+        daemon_reload: true
+        enabled: true
+        state: started

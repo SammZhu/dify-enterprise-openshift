@@ -1,0 +1,20 @@
+---
+- name: "{{ rhdp_stack }} | {{ rhdp_stage }} on {{ rhdp_side }}"
+  rhdp_phase:
+    stack: "{{ rhdp_stack }}"
+    side: "{{ rhdp_side }}"
+    stage: "{{ rhdp_stage }}"
+    operation: "{{ rhdp_operation | default('execute') }}"
+    settings: "{{ rhdp_settings }}"
+    identity: "{{ rhdp_identity | default({}) }}"
+    source_dir: "{{ (rhdp_settings.workDir if rhdp_side == 'jump' else rhdp_settings.remoteDir) }}/source"
+    run_id: "{{ rhdp_run_id }}"
+  delegate_to: "{{ inventory_hostname if rhdp_side == 'jump' else rhdp_highside_host }}"
+  async: "{{ rhdp_phase_timeout }}"
+  poll: "{{ rhdp_poll_seconds }}"
+  register: rhdp_phase_result
+  no_log: true
+
+- name: "Completed {{ rhdp_stack }} phase {{ rhdp_stage }} on {{ rhdp_side }}"
+  ansible.builtin.debug:
+    msg: "Completed {{ rhdp_stage }}; raw output stays in private host logs."
