@@ -23,7 +23,7 @@ class NativeTasks(unittest.TestCase):
         play = root / 'fixture.yml'
         play.write_text(yaml.safe_dump([dict(name='Native production task fixture', hosts='localhost',
             connection='local', gather_facts=False,
-            vars=dict(ansible_python_interpreter=sys.executable, ansible_async_dir=str(root/'async'), dify_tasks_dir=str(TASKS), **(variables or {})), tasks=tasks)]))
+            vars={'ansible_python_interpreter':sys.executable, 'ansible_async_dir':str(root/'async'), 'dify_tasks_dir':str(TASKS), **(variables or {})}, tasks=tasks)]))
         env = dict(os.environ, ANSIBLE_LOCAL_TEMP=str(root/'local-tmp'),
                    ANSIBLE_REMOTE_TEMP=str(root/'remote-tmp'), ANSIBLE_NOCOLOR='1',
                    ANSIBLE_ROLES_PATH=str(ROOT/'ansible/roles'))
