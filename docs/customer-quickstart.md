@@ -142,14 +142,41 @@ chmod 0600 "$DIFY_WORK_ROOT/dify-private/prepare.yml"
 sudo -v
 ```
 
-将源镜像认证保存到 **`$DIFY_WORK_ROOT/dify-private/source-auth.json`**（0600）。可以使用厂商提供的认证 JSON，或交互登录所需源仓库；将下面的“源仓库域名”替换为实际值，不要把密码写进命令行或 Git：
+### 源镜像认证：先选择已有文件或交互登录
+
+**已有有效容器认证 JSON 时，直接把其实际绝对路径填写到 `customer_source_authfile`，无需重新登录或复制。** 认证应由镜像供应商提供或按其授权流程取得，并覆盖所需源仓库；不要把普通门户账号密码当作所有镜像仓库通用的凭证。
+
+**RHDP Jump 先检查既有文件**，下面只检查可读性，不输出内容：
 
 ```bash
-podman login --authfile "$DIFY_WORK_ROOT/dify-private/source-auth.json" 源仓库域名
-chmod 0600 "$DIFY_WORK_ROOT/dify-private/source-auth.json"
+if test -r /home/lab-user/pull-secret-example.json; then
+  printf '%s\n' '已有源认证文件可读；prepare.yml 使用 /home/lab-user/pull-secret-example.json'
+else
+  printf '%s\n' '既有认证文件不可读；先按 Workshop Guide 核对文件位置和授权，不执行后面的制包。' >&2
+fi
 ```
 
-RHDP Jump 已有的 `/home/lab-user/pull-secret-example.json` 可直接用于 `customer_source_authfile`，无需重新登录或复制；先确认当前用户可读。使用现有认证时跳过上面的登录命令。
+文件可读时，在私有 `prepare.yml` 中填写：
+
+```yaml
+customer_source_authfile: /home/lab-user/pull-secret-example.json
+```
+
+使用这个文件的 RHDP 用户跳过下面的交互登录段，继续第 1.4 节。可读只说明文件存在且可读，实际镜像权限将在拉取时验证；若某个仓库拒绝访问，应补充该仓库的合法授权。
+
+**只有没有现成认证 JSON，且供应商要求登录获取授权时，才执行这一段。** 按提示输入供应商提供的实际源仓库 DNS 名称，不含 `https://` 或路径。用户名及密码/Token 也使用该仓库要求的凭证，不写进命令行或 Git：
+
+```bash
+read -r -p '请输入供应商提供的源镜像仓库 DNS 名称：' DIFY_SOURCE_REGISTRY
+if [[ "$DIFY_SOURCE_REGISTRY" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?$ ]]; then
+  podman login --authfile "$DIFY_WORK_ROOT/dify-private/source-auth.json" "$DIFY_SOURCE_REGISTRY" &&
+    chmod 0600 "$DIFY_WORK_ROOT/dify-private/source-auth.json"
+else
+  printf '%s\n' '仓库地址未填写或格式无效，未执行登录。请填写实际 DNS 名称，不含协议和路径。' >&2
+fi
+```
+
+只有登录成功才会设置认证文件权限。生成的文件对应 `customer_source_authfile` 为 `$DIFY_WORK_ROOT/dify-private/source-auth.json` 展开后的实际绝对路径；登录失败时先处理失败原因，不继续制包。
 
 ### 1.4 编辑参数文件
 
