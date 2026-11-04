@@ -242,6 +242,28 @@ cd "$DIFY_SOURCE_DIR/ansible"
 
 **升级到原生任务或更新源码后重新制作交付介质，请选择新的 `customer_media_root`。** 已封包的目录保持不可变，pull 源码不会更新旧包内的 Playbook；旧脚本版导出不能与新原生介质混合。既有安装的清理可从新版完整源码运行，具体路径见清理指南。
 
+### 2.1 查看本次介质的镜像清单
+
+文件名是 **`images.lock.yaml`**，位于 `customer_media_root` 指定的目录下面的 **`bundle/images.lock.yaml`**。它在联网端的 **export 阶段全部镜像导出成功后**生成；首次制包之前或导出中途可能尚不存在，不需要手工创建。
+
+| 所在位置 | 镜像清单路径 |
+|---|---|
+| 客户联网制作机 | `customer_media_root` 的实际值下面的 `bundle/images.lock.yaml` |
+| 本文 RHDP Jump 示例 | `/mnt/low-side-data/dify-customer-media-native-001/bundle/images.lock.yaml` |
+| 离线 Podman 主机按第 3 步解包后 | `/opt/dify-media/bundle/images.lock.yaml` |
+
+本次 RHDP 示例在 **Jump** 上查看：
+
+```bash
+cat /mnt/low-side-data/dify-customer-media-native-001/bundle/images.lock.yaml
+```
+
+若更改了 `customer_media_root`，查看命令也要使用相应的实际目录。清单中 `source` 是源镜像引用，`resolvedSource` 是补全仓库域名后的引用（如 `docker.io/...`），`archive` 是包内 OCI 归档的相对路径，还记录镜像身份及摘要。以本次文件为准，不能把某个版本的示例镜像表当作所有交付包的固定内容。
+
+`pull-secret-example.json` 或 `source-auth.json` 用于提供仓库认证；`images.lock.yaml` 记录实际导出的镜像，两者用途不同。镜像清单只读查看，不应手工改写；改动会破坏封包校验。若导出失败、文件尚未生成，先查看本次工作目录的 `logs/last-error.json`，不要创建一个空清单继续安装。
+
+### 2.2 搬运交付文件
+
 完成后，从 `prepare.yml` 中 **`customer_media_root` 的实际目录**搬运两个文件。以上 RHDP 示例的输出位置是：
 
 ```text
