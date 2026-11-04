@@ -23,10 +23,10 @@ Quick Start 默认配置为 Dify Enterprise 3.9.8、namespace/release `dify`、L
 
 RHDP 离线集群创建独立放在私有 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)；本仓库不创建集群。`dify.yml` 在该验证环境中探测客户参数、传输同一份介质、配置 AWS 私网访问，然后调用客户 Role，不维护第二份安装实现。
 
-在 Workshop Jump 的完整源码 `ansible/` 目录执行：
+在 Workshop Jump 执行。下面使用本环境实际解压目录；若源码在别处，修改第一条 `cd`：
 
 ```bash
-cd dify-enterprise-openshift/ansible
+cd /mnt/low-side-data/dify-enterprise-openshift/ansible
 /mnt/low-side-data/ansible-venv/bin/ansible-playbook dify.yml --check
 /mnt/low-side-data/ansible-venv/bin/ansible-playbook dify.yml
 ```

@@ -154,3 +154,16 @@ RHDP 环境启动后，SNO Node Ready、rootless Quay 自动恢复，私有工�
 ## 按客户入口复验时的 Highside 前置
 
 RHDP 远程部署的 Highside Python 3.9 与客户入口在本地主机运行 Ansible 所需的 Python 3.12 是不同前提。若按客户 Quick Start 复验，在 Jump 用 [原生前置任务](host-prerequisites.md) 准备 Highside；该步骤仅准备 OS，应用流程使用同一客户原生 Role；它不代表离线应用安装阶段可以访问公网。
+
+## 用客户 Quick Start 在 Jump 手工制包
+
+客户主线的制作入口同样支持 Jump 的 `lab-user`；不需要创建 `/opt/dify-enterprise-openshift` 或使用 `/root/dify-private`。若源码已下载解压到本环境的实际目录，在 [客户 Quick Start 第 1.1 步](customer-quickstart.md#11-选择当前环境的路径) 选择 RHDP 那组路径：
+
+```bash
+export DIFY_WORK_ROOT=/mnt/low-side-data
+export DIFY_SOURCE_DIR=/mnt/low-side-data/dify-enterprise-openshift
+```
+
+跳过下载，继续文件确认、六条环境准备命令及第 2 步。Ansible venv、私有参数、介质分别位于 `/mnt/low-side-data/dify-ansible`、`/mnt/low-side-data/dify-private`、`prepare.yml` 指定的 `customer_media_root`。源认证可使用既有 `/home/lab-user/pull-secret-example.json`；运行制包的当前用户须可读，并具备 rootful Podman 的 sudo 权限。
+
+本文前面的 `dify.yml` 是 RHDP 自动适配入口；这里说明的是在 RHDP 验证客户 `customer-prepare.yml` 的操作路径，两者共用同一个 Role。不要并行运行它们。
