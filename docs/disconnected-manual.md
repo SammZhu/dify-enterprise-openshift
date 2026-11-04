@@ -10,13 +10,13 @@ Role 接受 `linux/arm64` 和外部 S3/ODF 分支；它们尚未在真实对应�
 
 ## 填写位置
 
-联网机的私有 `/root/dify-private/prepare.yml` 中填写：
+联网机使用 Quick Start 中选择的用户可写私有目录。例如客户用户 `customer` 的 `/home/customer/dify-private/prepare.yml` 中填写：
 
 ```yaml
-customer_values_overlay: /root/dify-private/values-overlay.yml
+customer_values_overlay: /home/customer/dify-private/values-overlay.yml
 ```
 
-覆盖文件权限设为 0600，保存在源码目录之外。它在公共默认值和 Quick Start 拓扑参数之后合并；vendor 细项通过 `offline.chartValues` 覆盖。不要修改封好的 `bundle`。秘密写成 `@@secret:name/key@@`，由安装从目标 `dify` namespace 读取；客户需事先以自己的秘密管理流程创建 Secret，明文密码不能放入覆盖文件或 Git。
+上述路径只是示例，替换为实际绝对路径；RHDP Jump 可使用 `/mnt/low-side-data/dify-private/values-overlay.yml`。覆盖文件权限设为 0600，保存在源码目录之外。它在公共默认值和 Quick Start 拓扑参数之后合并；vendor 细项通过 `offline.chartValues` 覆盖。不要修改封好的 `bundle`。秘密写成 `@@secret:name/key@@`，由安装从目标 `dify` namespace 读取；客户需事先以自己的秘密管理流程创建 Secret，明文密码不能放入覆盖文件或 Git。
 
 ## 使用已有外部 S3
 
