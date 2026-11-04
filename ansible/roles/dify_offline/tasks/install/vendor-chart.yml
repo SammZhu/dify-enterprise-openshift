@@ -1,0 +1,70 @@
+---
+- name: Allocate private derived Chart workspace
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ dify_state }}"
+    prefix: derived-chart-
+  register: dify_derived_chart
+
+- name: Build and install the derived offline Chart
+  block:
+    - name: Create derived Chart template directory
+      ansible.builtin.file:
+        path: "{{ dify_derived_chart.path }}/templates"
+        state: directory
+        mode: '0700'
+
+    - name: Write resolved vendor values to the private workspace
+      ansible.builtin.copy:
+        content: "{{ dify_values_text }}"
+        dest: "{{ dify_derived_chart.path }}/resolved-values.yaml"
+        mode: '0600'
+      no_log: true
+
+    - name: Read the original Chart metadata
+      ansible.builtin.command:
+        argv: ["{{ dify_helm }}", show, chart, "{{ dify_chart }}"]
+      register: dify_vendor_meta
+      changed_when: false
+
+    - name: Preserve Chart identity without network dependencies
+      ansible.builtin.copy:
+        dest: "{{ dify_derived_chart.path }}/Chart.yaml"
+        content: "{{ (dify_vendor_meta.stdout | from_yaml) | combine({'dependencies': []}) | to_nice_yaml }}"
+        mode: '0600'
+
+    - name: Render vendor resources locally including hooks
+      ansible.builtin.command:
+        argv: ["{{ dify_helm }}", template, dify, "{{ dify_chart }}", -n, dify, -f, "{{ dify_derived_chart.path }}/resolved-values.yaml", --api-versions, route.openshift.io/v1, --api-versions, security.openshift.io/v1]
+      register: dify_resolved_vendor
+      changed_when: false
+      no_log: true
+
+    - name: Transform each resource and preserve its hook annotations
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/vendor-resource.yml"
+      loop: "{{ dify_resolved_vendor.stdout | from_yaml_all | select('mapping') | list }}"
+      loop_control:
+        loop_var: dify_rendered_resource
+        index_var: dify_manifest_index
+        label: "{{ dify_rendered_resource.kind }}/{{ dify_rendered_resource.metadata.name }}"
+
+    - name: Record offline installer ownership before Helm release creation
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/apply.yml"
+      vars:
+        dify_apply_resource:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata: {name: dify-offline-install, namespace: dify}
+          data: {installer: offline-v1, lockSHA256: "{{ dify_lock_sha }}"}
+
+    - name: Install Dify using local Helm with no Python post-renderer
+      ansible.builtin.command:
+        argv: ["{{ dify_helm }}", upgrade, --install, dify, "{{ dify_derived_chart.path }}", --kubeconfig, "{{ customer_kubeconfig }}", --kube-context, "{{ customer_context }}", -n, dify, --force, --wait, --timeout, 15m]
+      no_log: true
+      async: "{{ customer_phase_timeout }}"
+      poll: 20
+  always:
+    - name: Remove resolved credentials and derived Chart files
+      ansible.builtin.file:
+        path: "{{ dify_derived_chart.path }}"
+        state: absent

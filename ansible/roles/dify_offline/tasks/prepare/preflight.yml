@@ -1,0 +1,150 @@
+---
+- name: Gather the preparation host platform
+  ansible.builtin.setup:
+    gather_subset: [min]
+
+- name: Validate supported preparation platform and customer topology
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Linux'
+      - ansible_facts.architecture in ['x86_64', 'aarch64']
+      - ansible_facts.os_family == 'RedHat'
+      - ansible_facts.distribution_major_version == '9'
+      - customer_ocp_version is match('^4\.(20|21)\.[0-9]+$')
+      - customer_apps_domain is match('^[A-Za-z0-9.-]+$')
+      - "'example.com' not in customer_apps_domain"
+      - customer_registry_host is match('^[A-Za-z0-9.-]+$')
+      - "'example.com' not in customer_registry_host"
+      - customer_storage_class | length > 0
+      - ([customer_registry_port | int, customer_wheel_port | int, customer_s3_port | int] | unique | length) == 3
+      - ([customer_registry_port | int, customer_wheel_port | int, customer_s3_port | int] | min) >= 1024
+      - ([customer_registry_port | int, customer_wheel_port | int, customer_s3_port | int] | max) <= 65535
+      - customer_source_authfile is match('^/')
+      - not customer_source_authfile.startswith(customer_source_dir + '/')
+    quiet: true
+
+- name: Validate source authentication without including it in media
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/prepare/source-auth.yml"
+
+- name: Read the preparation controller ABI before collecting offline wheels
+  ansible.builtin.command:
+    argv: ["{{ ansible_playbook_python }}", --version]
+  register: dify_controller_version
+  changed_when: false
+
+- name: Require the documented Python 3.12 controller ABI for portable wheels
+  ansible.builtin.assert:
+    that: dify_controller_version.stdout is match('^Python 3\.12\.')
+    quiet: true
+
+- name: Read public base and disconnected defaults
+  ansible.builtin.slurp:
+    src: "{{ customer_source_dir }}/examples/helm/{{ item }}"
+  loop: [values.yaml, values-disconnected.yaml]
+  register: dify_base_values
+
+- name: Build customer topology override
+  ansible.builtin.set_fact:
+    dify_customer_values:
+      deployer: {domain: "{{ customer_apps_domain }}"}
+      components:
+        objectStorage: {enabled: false}
+        minio: {enabled: false}
+        postgresql: {storage: {storageClassName: "{{ customer_storage_class }}"}}
+        redis: {storage: {storageClassName: "{{ customer_storage_class }}"}}
+        qdrant: {storage: {storageClassName: "{{ customer_storage_class }}"}}
+      offline:
+        platform: linux/amd64
+        registry: "{{ customer_registry_host }}:{{ customer_registry_port }}"
+        pipMirror: "https://{{ customer_registry_host }}:{{ customer_wheel_port }}/simple/"
+        localS3: {enabled: true, image: 'docker.io/chrislusf/seaweedfs:4.51', port: "{{ customer_s3_port | int }}", bucket: dify}
+
+- name: Read optional reviewed values overlay
+  ansible.builtin.slurp:
+    src: "{{ customer_values_overlay }}"
+  register: dify_overlay
+  when: customer_values_overlay | default('', true) | length > 0
+  no_log: true
+
+- name: Merge public defaults and customer configuration
+  ansible.builtin.set_fact:
+    dify_cfg: "{{ (dify_base_values.results[0].content | b64decode | from_yaml) | combine(dify_base_values.results[1].content | b64decode | from_yaml, recursive=true) | combine(dify_customer_values, recursive=true) | combine((dify_overlay.content | default('e30=') | b64decode | from_yaml), recursive=true) }}"
+  no_log: true
+
+- name: Validate offline component contract
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/validate-config.yml"
+
+- name: Require preparation and target architecture to match for controller wheels
+  ansible.builtin.assert:
+    that: "dify_cfg.offline.platform.split('/')[1] == {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture]"
+    quiet: true
+
+- name: Inspect optional input trees including symlinks
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+  loop: "{{ [customer_plugins_dir, customer_wheels_dir] | reject('equalto', '') | list }}"
+  register: dify_input_directories
+
+- name: Require existing real optional input directories
+  ansible.builtin.assert:
+    that:
+      - item.item is match('^/')
+      - item.stat.isdir | default(false)
+      - not item.stat.islnk | default(false)
+    quiet: true
+  loop: "{{ dify_input_directories.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Hash optional input trees including symlinks
+  ansible.builtin.find:
+    paths: "{{ item }}"
+    recurse: true
+    hidden: true
+    file_type: any
+    get_checksum: true
+    checksum_algorithm: sha256
+  loop: "{{ [customer_plugins_dir, customer_wheels_dir] | reject('equalto', '') | list }}"
+  register: dify_inputs
+
+- name: Refuse symlinked private media inputs
+  ansible.builtin.assert:
+    that: dify_inputs.results | default([]) | map(attribute='files') | flatten | selectattr('islnk') | list | length == 0
+    quiet: true
+
+- name: Initialize exact input content records
+  ansible.builtin.set_fact:
+    dify_input_manifest: []
+
+- name: Bind input filenames as well as bytes to prevent silently reusing renamed plugins
+  ansible.builtin.set_fact:
+    dify_input_manifest: "{{ dify_input_manifest + [{'path': item.path, 'sha256': item.checksum}] }}"
+  loop: "{{ dify_inputs.results | default([]) | map(attribute='files') | flatten | selectattr('isreg') | list }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Bind preparation to configuration and input content
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/bind.yml"
+  vars:
+    dify_binding_path: "{{ dify_root }}/prepare-binding.json"
+    dify_binding:
+      ocpVersion: "{{ customer_ocp_version }}"
+      configSHA256: "{{ dify_cfg | to_json(sort_keys=true) | hash('sha256') }}"
+      inputs: "{{ dify_input_manifest | sort(attribute='path') }}"
+
+- name: Check available media disk space
+  ansible.builtin.command:
+    argv: [df, -B1, --output=avail, "{{ dify_root }}"]
+  register: dify_free
+  changed_when: false
+
+- name: Require 30 GiB free for image preparation
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/stages/export.json"
+  register: dify_export_stage
+
+- name: Require export capacity only before the initial export
+  ansible.builtin.assert:
+    that: dify_export_stage.stat.exists or dify_free.stdout_lines[-1] | trim | int >= 30 * 1024 * 1024 * 1024
+    quiet: true

@@ -1,0 +1,24 @@
+# Managed by dify-enterprise-openshift Ansible
+[Unit]
+Description=Dify offline Registry and wheel index boot recovery
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor={{ dify_service_state }} {{ dify_service_bundle }}
+ConditionPathExists={{ dify_service_bundle }}/images.lock.yaml
+ConditionPathExists={{ dify_service_state }}/auth.json
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0077
+ExecStart=/usr/bin/podman --cgroup-manager=cgroupfs start dify-offline-registry dify-offline-pypi
+ExecStop=/usr/bin/podman --cgroup-manager=cgroupfs stop --ignore --time=30 dify-offline-pypi dify-offline-registry
+TimeoutStartSec=180
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

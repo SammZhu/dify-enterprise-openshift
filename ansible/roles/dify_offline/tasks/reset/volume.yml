@@ -1,0 +1,15 @@
+---
+- name: Read the PVC's exact backing PV
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'persistentvolume', dify_reset_pvc.spec.volumeName, '-o', 'json'] }}"
+  register: dify_reset_pv
+  changed_when: false
+
+- name: Require PV claim UID identity
+  ansible.builtin.assert:
+    that: (dify_reset_pv.stdout | from_json).spec.claimRef.uid == dify_reset_pvc.metadata.uid
+    quiet: true
+
+- name: Record reclaim policy without deleting the PV directly
+  ansible.builtin.set_fact:
+    dify_reset_volumes: "{{ dify_reset_volumes + [{'name': dify_reset_pvc.spec.volumeName, 'pvc': dify_reset_pvc.metadata.name, 'reclaimPolicy': (dify_reset_pv.stdout | from_json).spec.persistentVolumeReclaimPolicy}] }}"

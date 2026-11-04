@@ -20,3 +20,7 @@ customer_storage_class: gp3-csi
 # 可选：联网制作机上审核后的 .difypkg 和完整运行依赖 wheels 目录。
 # customer_plugins_dir: /root/dify-private/plugins
 # customer_wheels_dir: /root/dify-private/plugin-wheels
+
+# 可选：同一客户 Role 的高级配置，详见 docs/disconnected-manual.md。
+# 覆盖文件应在源码之外；秘密用目标 Secret 引用，勿写明文密码。
+# customer_values_overlay: /root/dify-private/values-overlay.yml

@@ -1,0 +1,26 @@
+---
+- name: Accept only explicitly proven root resource UIDs
+  ansible.builtin.set_fact:
+    dify_owned_uids: "{{ (dify_owned_uids + [obj.metadata.uid]) | unique }}"
+  vars:
+    obj: "{{ dify_classify_object }}"
+    labels: "{{ obj.metadata.labels | default({}) }}"
+    annotations: "{{ obj.metadata.annotations | default({}) }}"
+    key: "{{ (obj.apiVersion.split('/')[0] if '/' in obj.apiVersion else '') + '/' + obj.kind + '/' + obj.metadata.name }}"
+    service_accounts: "{{ ['default', 'builder', 'deployer'] + (dify_groups.values() | flatten | selectattr('kind', 'equalto', 'ServiceAccount') | map(attribute='metadata.name') | list) }}"
+    platform_owned: >-
+      {{ (obj.kind == 'ServiceAccount' and obj.metadata.name in ['default', 'builder', 'deployer'])
+      or (obj.kind == 'ConfigMap' and obj.metadata.name in ['kube-root-ca.crt', 'openshift-service-ca.crt'])
+      or (obj.kind == 'RoleBinding' and obj.metadata.name in ['system:image-pullers', 'system:image-builders', 'system:deployers'])
+      or (obj.kind == 'Secret' and annotations.get('kubernetes.io/service-account.name', '') in service_accounts)
+      or obj.kind == 'Event' }}
+    manifest_owned: >-
+      {{ key in dify_expected_keys and (labels.get('demo.redhat.com/application', '') == 'dify-enterprise'
+      or (annotations.get('meta.helm.sh/release-name', '') == 'dify' and annotations.get('meta.helm.sh/release-namespace', '') == 'dify')) }}
+    generated_owned: >-
+      {{ (obj.kind == 'Secret' and obj.metadata.name in ['offline-registry-pull', 'image-repo-secret', 'offline-registry-ca', 'dify-local-s3', 'dify-offline-keys', 'dify-postgresql', 'dify-redis', 'dify-qdrant'])
+      or (obj.kind == 'ConfigMap' and obj.metadata.name == 'dify-offline-install')
+      or (obj.kind == 'Secret' and obj.metadata.name is match('^sh\.helm\.release\.v1\.dify\.v[0-9]+$') and labels.get('owner', '') == 'helm' and labels.get('name', '') == 'dify')
+      or (obj.kind == 'PersistentVolumeClaim' and obj.metadata.name in dify_expected_pvcs) }}
+  when: platform_owned | bool or manifest_owned | bool or generated_owned | bool
+  no_log: true

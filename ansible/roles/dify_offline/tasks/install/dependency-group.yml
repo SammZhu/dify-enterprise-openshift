@@ -1,0 +1,14 @@
+---
+- name: Apply resources from one dependency group
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/dependency-resource.yml"
+  loop: "{{ dify_dependency_group.value }}"
+  loop_control:
+    loop_var: dify_rendered_resource
+    label: "{{ dify_rendered_resource.kind }}/{{ dify_rendered_resource.metadata.name }}"
+
+- name: Wait for workload, Job and CRD readiness in this dependency group
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/wait-resource.yml"
+  loop: "{{ dify_dependency_group.value }}"
+  loop_control:
+    loop_var: dify_wait_resource
+    label: "{{ dify_wait_resource.kind }}/{{ dify_wait_resource.metadata.name }}"

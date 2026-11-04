@@ -1,0 +1,15 @@
+---
+- name: Reject terminating, failed and unready workloads
+  ansible.builtin.assert:
+    that:
+      - dify_accept_pod.metadata.deletionTimestamp is not defined
+      - dify_accept_pod.status.phase == 'Succeeded' or (dify_accept_pod.status.phase == 'Running' and dify_accept_pod.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0)
+    quiet: true
+
+- name: Require internal digest-pinned images including init containers
+  ansible.builtin.assert:
+    that: item.image is match('^' + (dify_cfg.offline.registry | regex_escape) + '/.*@sha256:[a-f0-9]{64}$')
+    quiet: true
+  loop: "{{ dify_accept_pod.spec.containers + dify_accept_pod.spec.initContainers | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"

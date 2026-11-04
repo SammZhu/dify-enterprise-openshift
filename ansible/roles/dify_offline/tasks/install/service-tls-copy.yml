@@ -1,0 +1,27 @@
+---
+- name: Inspect supplied TLS file and retained destination
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    get_checksum: true
+    checksum_algorithm: sha256
+    follow: false
+  loop: ["{{ dify_tls_file.source }}", "{{ dify_state }}/certificates/{{ dify_tls_file.name }}"]
+  register: dify_tls_compare
+  no_log: true
+
+- name: Refuse missing TLS input or implicit credential rotation
+  ansible.builtin.assert:
+    that:
+      - dify_tls_compare.results[0].stat.isreg | default(false)
+      - not dify_tls_compare.results[1].stat.exists or dify_tls_compare.results[0].stat.checksum == dify_tls_compare.results[1].stat.checksum
+    quiet: true
+  no_log: true
+
+- name: Install supplied TLS file only when absent
+  ansible.builtin.copy:
+    src: "{{ dify_tls_file.source }}"
+    dest: "{{ dify_state }}/certificates/{{ dify_tls_file.name }}"
+    remote_src: true
+    mode: '0600'
+  when: not dify_tls_compare.results[1].stat.exists
+  no_log: true

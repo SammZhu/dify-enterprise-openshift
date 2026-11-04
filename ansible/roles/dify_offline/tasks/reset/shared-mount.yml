@@ -1,0 +1,26 @@
+---
+- name: Read mounts of a different local container
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['inspect', dify_other_container.Id] }}"
+  become: true
+  register: dify_other_info
+  changed_when: false
+  no_log: true
+
+- name: Resolve bind mount aliases before comparing data trees
+  ansible.builtin.command:
+    argv: [realpath, -m, --, "{{ item.Source }}"]
+  loop: "{{ (dify_other_info.stdout | from_json)[0].Mounts | selectattr('Type', 'equalto', 'bind') | list }}"
+  register: dify_resolved_other_mounts
+  changed_when: false
+  no_log: true
+
+- name: Reject overlapping bind mount source trees including symbolic aliases
+  ansible.builtin.assert:
+    that:
+      - not (item[0].stdout | trim).startswith(item[1].stat.path + '/')
+      - not item[1].stat.path.startswith((item[0].stdout | trim) + '/')
+      - item[0].stdout | trim != item[1].stat.path
+    quiet: true
+  loop: "{{ dify_resolved_other_mounts.results | product(dify_reset_data_stats.results) | list }}"
+  no_log: true

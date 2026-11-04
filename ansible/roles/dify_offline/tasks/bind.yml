@@ -1,0 +1,29 @@
+---
+- name: Inspect existing installation binding
+  ansible.builtin.stat:
+    path: "{{ dify_binding_path }}"
+    follow: false
+  register: dify_binding_stat
+
+- name: Read existing binding without exposing private configuration
+  ansible.builtin.slurp:
+    src: "{{ dify_binding_path }}"
+  register: dify_old_binding
+  when: dify_binding_stat.stat.exists
+  no_log: true
+
+- name: Refuse reuse with another configuration or cluster
+  ansible.builtin.assert:
+    that:
+      - not dify_binding_stat.stat.islnk | default(false)
+      - not dify_binding_stat.stat.exists or (dify_old_binding.content | b64decode | from_json) == dify_binding
+    quiet: true
+  no_log: true
+
+- name: Persist accepted configuration binding
+  ansible.builtin.copy:
+    content: "{{ dify_binding | to_nice_json }}\n"
+    dest: "{{ dify_binding_path }}"
+    mode: '0600'
+  when: not dify_binding_stat.stat.exists
+  no_log: true

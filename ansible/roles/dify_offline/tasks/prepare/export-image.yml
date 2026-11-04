@@ -1,0 +1,94 @@
+---
+- name: Canonicalize one source reference
+  ansible.builtin.set_fact:
+    dify_canonical_ref: "{{ ('docker.io/library/' + dify_image_ref) if '/' not in dify_image_ref else (dify_image_ref if ('.' in dify_image_ref.split('/')[0] or ':' in dify_image_ref.split('/')[0] or dify_image_ref.split('/')[0] == 'localhost') else 'docker.io/' + dify_image_ref) }}"
+    dify_image_archive: "images/{{ '%03d' | format(dify_image_index) }}.tar"
+
+- name: Pull one image for the selected target platform
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['pull', '--authfile', customer_source_authfile, '--platform', dify_cfg.offline.platform, dify_canonical_ref] }}"
+  become: true
+  when: not dify_canonical_ref.startswith('localhost/')
+  no_log: true
+  async: "{{ customer_phase_timeout }}"
+  poll: 20
+
+- name: Inspect the pulled image architecture and identity
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['image', 'inspect', dify_canonical_ref] }}"
+  become: true
+  register: dify_pulled
+  changed_when: false
+  no_log: true
+
+- name: Require the selected Linux architecture
+  ansible.builtin.assert:
+    that:
+      - (dify_pulled.stdout | from_json)[0].Architecture == dify_cfg.offline.platform.split('/')[1]
+      - (dify_pulled.stdout | from_json)[0].Os == 'linux'
+      - (dify_pulled.stdout | from_json)[0].Id is match('^(?:sha256:)?[a-f0-9]{64}$')
+    quiet: true
+
+- name: Save the image without manifest-list ambiguity
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['save', '--format', 'oci-archive', '-o', dify_bundle + '/' + dify_image_archive, (dify_pulled.stdout | from_json)[0].Id] }}"
+  become: true
+
+- name: Make the rootful OCI archive readable to the preparation controller
+  ansible.builtin.file:
+    path: "{{ dify_bundle }}/{{ dify_image_archive }}"
+    mode: '0644'
+  become: true
+
+- name: Read OCI archive index using the standard tar tool
+  ansible.builtin.command:
+    argv: [tar, -xOf, "{{ dify_bundle }}/{{ dify_image_archive }}", index.json]
+  register: dify_oci_index
+  changed_when: false
+
+- name: Require exactly one OCI manifest
+  ansible.builtin.assert:
+    that:
+      - (dify_oci_index.stdout | from_json).manifests | length == 1
+      - (dify_oci_index.stdout | from_json).manifests[0].digest is match('^sha256:[a-f0-9]{64}$')
+    quiet: true
+
+- name: Read selected OCI manifest
+  ansible.builtin.command:
+    argv: [tar, -xOf, "{{ dify_bundle }}/{{ dify_image_archive }}", "blobs/sha256/{{ (dify_oci_index.stdout | from_json).manifests[0].digest.split(':')[1] }}"]
+    strip_empty_ends: false
+  register: dify_oci_manifest
+  changed_when: false
+
+- name: Check manifest digest and config digest format
+  ansible.builtin.assert:
+    that:
+      - ('sha256:' + (dify_oci_manifest.stdout | hash('sha256'))) == (dify_oci_index.stdout | from_json).manifests[0].digest
+      - (dify_oci_manifest.stdout | from_json).config.digest is match('^sha256:[a-f0-9]{64}$')
+    quiet: true
+
+- name: Read OCI config blob
+  ansible.builtin.command:
+    argv: [tar, -xOf, "{{ dify_bundle }}/{{ dify_image_archive }}", "blobs/sha256/{{ (dify_oci_manifest.stdout | from_json).config.digest.split(':')[1] }}"]
+    strip_empty_ends: false
+  register: dify_oci_config
+  changed_when: false
+
+- name: Verify the loadable image ID against OCI config content
+  ansible.builtin.assert:
+    that: ('sha256:' + (dify_oci_config.stdout | hash('sha256'))) == (dify_oci_manifest.stdout | from_json).config.digest
+    quiet: true
+
+- name: Record OCI identities rather than the pre-conversion Docker config digest
+  vars:
+    dify_source_info: "{{ (dify_pulled.stdout | from_json)[0] }}"
+    dify_export_entry:
+      source: "{{ dify_image_ref }}"
+      resolvedSource: "{{ dify_canonical_ref }}"
+      archive: "{{ dify_image_archive }}"
+      roles: "{{ dify_image_roles | dict2items | selectattr('value', 'equalto', dify_image_ref) | map(attribute='key') | list }}"
+      sourceImageId: "{{ dify_source_info.Id if dify_source_info.Id.startswith('sha256:') else 'sha256:' + dify_source_info.Id }}"
+      sourceDigest: "{{ (dify_oci_index.stdout | from_json).manifests[0].digest }}"
+      imageId: "{{ (dify_oci_manifest.stdout | from_json).config.digest }}"
+  ansible.builtin.set_fact:
+    dify_exported_images: "{{ dify_exported_images | default([]) + [dify_export_entry | combine({'sourceRegistryDigest': dify_source_info.Digest} if dify_source_info.get('Digest') else {})] }}"

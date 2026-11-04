@@ -3,9 +3,12 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  become: true
   vars_files: [customer-defaults.yml]
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Run the local customer reset workflow
-      ansible.builtin.import_tasks: tasks/customer-reset-workflow.yml
+      ansible.builtin.include_role:
+        name: dify_offline
+        tasks_from: reset/main

@@ -1,0 +1,86 @@
+---
+- name: Load one image using its verified OCI archive
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['load', '-i', dify_bundle + '/' + dify_import_image.archive] }}"
+  become: true
+
+- name: Select the loadable image ID and destination repository
+  ansible.builtin.set_fact:
+    dify_push_id: "{{ dify_import_image.imageId }}"
+    dify_push_repo: "{{ dify_cfg.offline.registry }}/dify-offline/image-{{ '%03d' | format(dify_image_index) }}"
+
+- name: Embed private CA in plugin build images without network access
+  when: "'kaniko-project/executor' in dify_import_image.source or '/plugin-build-base-python:' in dify_import_image.source"
+  block:
+    - name: Allocate private local build directory
+      ansible.builtin.tempfile:
+        path: "{{ dify_state }}"
+        state: directory
+        prefix: build-ca-
+      register: dify_ca_build
+
+    - name: Prepare public CA file in the local build context
+      ansible.builtin.copy:
+        src: "{{ dify_state }}/certificates/ca.crt"
+        dest: "{{ dify_ca_build.path }}/ca.crt"
+        remote_src: true
+        mode: '0644'
+
+    - name: Tag the verified base image locally
+      ansible.builtin.command:
+        argv: "{{ dify_podman + ['tag', dify_push_id, 'localhost/dify-offline-base:' + (dify_image_index | string)] }}"
+      become: true
+
+    - name: Define the isolated CA build
+      ansible.builtin.copy:
+        dest: "{{ dify_ca_build.path }}/Containerfile"
+        mode: '0600'
+        content: |
+          FROM localhost/dify-offline-base:{{ dify_image_index }}
+          {% if 'kaniko-project/executor' in dify_import_image.source %}
+          COPY ca.crt /kaniko/ssl/certs/offline-registry.crt
+          ENV SSL_CERT_DIR=/kaniko/ssl/certs
+          {% else %}
+          COPY ca.crt /opt/offline-ca.crt
+          ENV SSL_CERT_FILE=/opt/offline-ca.crt REQUESTS_CA_BUNDLE=/opt/offline-ca.crt PIP_CERT=/opt/offline-ca.crt UV_NATIVE_TLS=true
+          {% endif %}
+
+    - name: Build with pulls and build network disabled
+      ansible.builtin.command:
+        argv: "{{ dify_podman + ['build', '--pull=never', '--network=none', '--iidfile', dify_ca_build.path + '/image-id', dify_ca_build.path] }}"
+      become: true
+
+    - name: Read the CA-derived image ID
+      ansible.builtin.slurp:
+        src: "{{ dify_ca_build.path }}/image-id"
+      register: dify_derived_id
+
+    - name: Select the derived image for push
+      ansible.builtin.set_fact:
+        dify_push_id: "{{ dify_derived_id.content | b64decode | trim }}"
+  always:
+    - name: Remove only this temporary build directory
+      ansible.builtin.file:
+        path: "{{ dify_ca_build.path }}"
+        state: absent
+      when: dify_ca_build is defined
+
+- name: Push over verified TLS and record the destination manifest digest
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['push', '--authfile', dify_state + '/auth.json', '--cert-dir', dify_state + '/podman-certs', '--digestfile', dify_state + '/push-digest', dify_push_id, 'docker://' + dify_push_repo + ':bundle'] }}"
+  become: true
+  no_log: true
+
+- name: Read destination digest returned by Podman
+  ansible.builtin.slurp:
+    src: "{{ dify_state }}/push-digest"
+  register: dify_pushed_digest
+
+- name: Require a manifest SHA256 digest
+  ansible.builtin.assert:
+    that: dify_pushed_digest.content | b64decode | trim is match('^sha256:[a-f0-9]{64}$')
+    quiet: true
+
+- name: Append the immutable destination reference
+  ansible.builtin.set_fact:
+    dify_image_map: "{{ dify_image_map | combine({dify_import_image.source: dify_push_repo + '@' + (dify_pushed_digest.content | b64decode | trim)}) }}"

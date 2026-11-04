@@ -1,0 +1,36 @@
+---
+- name: Inventory every media entry including hidden files without following links
+  ansible.builtin.find:
+    paths: "{{ dify_bundle }}"
+    recurse: true
+    hidden: true
+    file_type: any
+    follow: false
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: dify_bundle_entries
+
+- name: Reject symlinks and special files from sealed media
+  ansible.builtin.assert:
+    that:
+      - dify_bundle_entries.skipped_paths | default({}) | length == 0
+      - dify_bundle_entries.files | selectattr('islnk') | list | length == 0
+      - dify_bundle_entries.files | rejectattr('isreg') | rejectattr('isdir') | list | length == 0
+    quiet: true
+
+- name: Initialize checksum map
+  ansible.builtin.set_fact:
+    dify_checksums: {}
+
+- name: Build the sealed relative path manifest
+  ansible.builtin.set_fact:
+    dify_checksums: "{{ dify_checksums | combine({item.path | relpath(dify_bundle): item.checksum}) }}"
+  loop: "{{ dify_bundle_entries.files | selectattr('isreg') | rejectattr('path', 'equalto', dify_bundle + '/checksums.json') | list }}"
+  loop_control:
+    label: "{{ item.path | relpath(dify_bundle) }}"
+
+- name: Write immutable bundle checksum manifest
+  ansible.builtin.copy:
+    content: "{{ dify_checksums | to_nice_json }}\n"
+    dest: "{{ dify_bundle }}/checksums.json"
+    mode: '0644'

@@ -1,0 +1,105 @@
+---
+- name: Enumerate approved plugin packages
+  ansible.builtin.find:
+    paths: "{{ customer_plugins_dir }}"
+    file_type: any
+    hidden: true
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: dify_plugin_files
+  when: customer_plugins_dir | length > 0
+
+- name: Require only regular difypkg files in the plugin input directory
+  ansible.builtin.assert:
+    that:
+      - item.isreg
+      - item.path.endswith('.difypkg')
+    quiet: true
+  loop: "{{ dify_plugin_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Copy approved plugin packages
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ dify_bundle }}/plugins/{{ item.path | basename }}"
+    remote_src: true
+    mode: '0644'
+  loop: "{{ dify_plugin_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Initialize plugin lock
+  ansible.builtin.set_fact:
+    dify_plugin_lock: []
+
+- name: Record approved plugin checksums
+  ansible.builtin.set_fact:
+    dify_plugin_lock: "{{ dify_plugin_lock + [{'file': item.path | basename, 'sha256': item.checksum}] }}"
+  loop: "{{ dify_plugin_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Write plugin inventory without asserting functional dependency closure
+  ansible.builtin.copy:
+    content: "{{ {'plugins': dify_plugin_lock, 'dependencyClosure': 'requires functional acceptance; not inferred from package copy'} | to_nice_yaml }}"
+    dest: "{{ dify_bundle }}/plugins.lock.yaml"
+    mode: '0644'
+
+- name: Enumerate pre-resolved plugin wheels
+  ansible.builtin.find:
+    paths: "{{ customer_wheels_dir }}"
+    patterns: '*.whl'
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: dify_wheel_files
+  when: customer_wheels_dir | length > 0
+
+- name: Group wheel files by normalized distribution name
+  ansible.builtin.set_fact:
+    dify_wheel_packages: "{{ dify_wheel_packages | default({}) | combine({dify_wheel_package: (dify_wheel_packages | default({})).get(dify_wheel_package, []) + [item]}) }}"
+  vars:
+    dify_wheel_package: "{{ (item.path | basename).split('-')[0] | lower | regex_replace('[-_.]+', '-') }}"
+  loop: "{{ dify_wheel_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Create public wheel package directories
+  ansible.builtin.file:
+    path: "{{ dify_bundle }}/pypi/simple/{{ item.key }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ dify_wheel_packages | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Copy public dependency wheels
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ dify_bundle }}/pypi/simple/{{ (item.path | basename).split('-')[0] | lower | regex_replace('[-_.]+', '-') }}/{{ item.path | basename }}"
+    remote_src: true
+    mode: '0644'
+  loop: "{{ dify_wheel_files.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Generate hashed package simple index pages
+  ansible.builtin.copy:
+    content: |
+      {% for wheel in item.value %}
+      <a href="{{ wheel.path | basename | e }}#sha256={{ wheel.checksum }}">{{ wheel.path | basename | e }}</a><br>
+      {% endfor %}
+    dest: "{{ dify_bundle }}/pypi/simple/{{ item.key }}/index.html"
+    mode: '0644'
+  loop: "{{ dify_wheel_packages | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Generate the public simple index root
+  ansible.builtin.copy:
+    content: |
+      {% for name in dify_wheel_packages | default({}) | sort %}
+      <a href="{{ name | e }}/">{{ name | e }}</a><br>
+      {% endfor %}
+    dest: "{{ dify_bundle }}/pypi/simple/index.html"
+    mode: '0644'

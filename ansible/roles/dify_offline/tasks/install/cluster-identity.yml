@@ -1,0 +1,95 @@
+---
+- name: Read image trust configuration
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'image.config.openshift.io', 'cluster', '-o', 'json'] }}"
+  register: dify_image_config
+  changed_when: false
+
+- name: Select existing trust ConfigMap or the dedicated Dify trust ConfigMap
+  ansible.builtin.set_fact:
+    dify_trust_name: "{{ (dify_image_config.stdout | from_json).spec.get('additionalTrustedCA', {}).get('name', '') or 'dify-offline-registry-cas' }}"
+
+- name: Read existing trusted registry CAs
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'configmap', dify_trust_name, '-n', 'openshift-config', '--ignore-not-found', '-o', 'json'] }}"
+  register: dify_trust_existing
+  changed_when: false
+
+- name: Read public service CA and private registry and S3 identities
+  ansible.builtin.slurp:
+    src: "{{ dify_state }}/{{ item }}"
+  loop: "{{ ['certificates/ca.crt', 'auth.json'] + (['local-s3.json'] if dify_cfg.offline.localS3.enabled | bool else []) }}"
+  register: dify_cluster_identity_files
+  no_log: true
+
+- name: Add only this registry CA key without replacing any other CA entry
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['patch', 'configmap', dify_trust_name, '-n', 'openshift-config', '--type=merge', '-p', {'data': {dify_cfg.offline.registry | replace(':', '..'): dify_cluster_identity_files.results[0].content | b64decode}} | to_json] }}"
+  when: dify_trust_existing.stdout | length > 0
+
+- name: Create a dedicated trust ConfigMap only if none exists
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['create', '-f', '-'] }}"
+    stdin: "{{ dify_apply_resource | to_nice_yaml }}"
+  vars:
+    dify_apply_resource:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: "{{ dify_trust_name }}", namespace: openshift-config}
+      data: "{{ (dify_trust_existing.stdout | default('{}', true) | from_json).get('data', {}) | combine({dify_cfg.offline.registry | replace(':', '..'): dify_cluster_identity_files.results[0].content | b64decode}) }}"
+  when: dify_trust_existing.stdout | length == 0
+
+- name: Point node image trust at the merged ConfigMap
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['patch', 'image.config.openshift.io', 'cluster', '--type=json', '-p', [{'op': 'test', 'path': '/metadata/resourceVersion', 'value': (dify_image_config.stdout | from_json).metadata.resourceVersion}, {'op': 'add', 'path': '/spec/additionalTrustedCA', 'value': {'name': dify_trust_name}}] | to_json] }}"
+
+- name: Create the application namespace
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/apply.yml"
+  vars:
+    dify_apply_resource: {apiVersion: v1, kind: Namespace, metadata: {name: dify}}
+
+- name: Decode stable service credentials
+  ansible.builtin.set_fact:
+    dify_registry_auth: "{{ dify_cluster_identity_files.results[1].content | b64decode | from_json }}"
+    dify_s3_identity: "{{ dify_cluster_identity_files.results[2].content | b64decode | from_json if dify_cfg.offline.localS3.enabled | bool else {} }}"
+  no_log: true
+
+- name: Require inline registry authentication and matching S3 bucket
+  ansible.builtin.assert:
+    that:
+      - dify_registry_auth.auths[dify_cfg.offline.registry].auth | length > 0
+      - not dify_cfg.offline.localS3.enabled | bool or dify_s3_identity.bucket == dify_cfg.offline.localS3.bucket
+    quiet: true
+  no_log: true
+
+- name: Create TLS and registry credential Secrets
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/apply.yml"
+  vars:
+    dify_apply_resource:
+      apiVersion: v1
+      kind: Secret
+      metadata: {name: "{{ item.name }}", namespace: dify}
+      type: "{{ item.type }}"
+      data: "{{ item.data }}"
+  loop:
+    - name: offline-registry-pull
+      type: kubernetes.io/dockerconfigjson
+      data: {'.dockerconfigjson': "{{ dify_cluster_identity_files.results[1].content }}"}
+    - name: image-repo-secret
+      type: kubernetes.io/dockerconfigjson
+      data: {'.dockerconfigjson': "{{ dify_cluster_identity_files.results[1].content }}", 'config.json': "{{ dify_cluster_identity_files.results[1].content }}"}
+    - name: offline-registry-ca
+      type: Opaque
+      data: {'ca.crt': "{{ dify_cluster_identity_files.results[0].content }}"}
+  no_log: true
+
+- name: Preserve existing application keys and S3 Secret
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/stable-secret.yml"
+  loop:
+    - name: dify-offline-keys
+      keys: [appSecretKey, innerApiKey, dashboardSecretKey]
+    - name: dify-local-s3
+      keys: [accessKey, secretKey]
+  loop_control:
+    loop_var: dify_stable_secret
+  when: dify_stable_secret.name != 'dify-local-s3' or dify_cfg.offline.localS3.enabled | bool

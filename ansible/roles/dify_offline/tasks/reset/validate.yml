@@ -1,0 +1,28 @@
+---
+- name: Validate frozen plan integrity and target identity
+  ansible.builtin.assert:
+    that:
+      - dify_reset_plan.format in [1, 2]
+      - dify_reset_plan.mode == customer_reset_mode
+      - dify_reset_plan.identity == dify_reset_identity
+      - (dify_reset_plan | dict2items | rejectattr('key', 'equalto', 'confirmation') | items2dict | to_json(sort_keys=true, separators=[',', ':']) | hash('sha256')) == dify_reset_plan.confirmation
+      - dify_reset_ns is none or dify_reset_ns.metadata.uid == dify_reset_plan.namespaceUID
+      - dify_reset_unit.stat.checksum | default(none) in [none, dify_reset_plan.unitSHA256]
+      - customer_reset_mode == 'full' or dify_service_containers | length == 3
+    quiet: true
+
+- name: Require all remaining containers to retain their reviewed IDs
+  ansible.builtin.assert:
+    that: dify_reset_plan.containers.get(item.key, '') == item.value.Id
+    quiet: true
+  loop: "{{ dify_service_containers | dict2items }}"
+  no_log: true
+
+- name: Recheck directory identities before any host-data operation
+  ansible.builtin.assert:
+    that: >-
+      (dify_reset_plan.directories.values() | selectattr('path', 'equalto', item.stat.path) | first) == {'path': item.stat.path, 'device': item.stat.dev, 'inode': item.stat.inode}
+    quiet: true
+  loop: "{{ dify_reset_data_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"

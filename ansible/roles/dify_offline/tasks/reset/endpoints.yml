@@ -1,0 +1,31 @@
+---
+- name: Locate the owned matching Service and endpoint address records
+  ansible.builtin.set_fact:
+    dify_endpoint_services: "{{ dify_reset_objects | selectattr('apiVersion', 'equalto', 'v1') | selectattr('kind', 'equalto', 'Service') | selectattr('metadata.name', 'equalto', dify_generated_object.metadata.name) | selectattr('metadata.uid', 'in', dify_owned_uids) | list }}"
+    dify_endpoint_addresses: []
+
+- name: Require an owned selector Service and the Kubernetes endpoint manager
+  ansible.builtin.assert:
+    that:
+      - dify_generated_object.metadata.namespace | default('dify') == 'dify'
+      - dify_endpoint_services | length == 1
+      - dify_endpoint_services[0].spec.selector | default({}) | length > 0
+      - dify_generated_object.metadata.get('labels', {}).get('endpoints.kubernetes.io/managed-by', 'endpoint-controller') == 'endpoint-controller'
+      - dify_generated_object.metadata.ownerReferences | default([]) | map(attribute='uid') | difference(dify_owned_uids) | length == 0
+    quiet: true
+
+- name: Collect both ready and not-ready endpoint addresses
+  ansible.builtin.set_fact:
+    dify_endpoint_addresses: "{{ dify_endpoint_addresses + item.addresses | default([]) + item.notReadyAddresses | default([]) }}"
+  loop: "{{ dify_generated_object.subsets | default([]) }}"
+  no_log: true
+
+- name: Prove each endpoint address against an owned matching Pod
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/endpoint-address.yml"
+  loop: "{{ dify_endpoint_addresses }}"
+  loop_control:
+    loop_var: dify_endpoint_address
+
+- name: Accept the proven controller Endpoints UID
+  ansible.builtin.set_fact:
+    dify_owned_uids: "{{ (dify_owned_uids + [dify_generated_object.metadata.uid]) | unique }}"

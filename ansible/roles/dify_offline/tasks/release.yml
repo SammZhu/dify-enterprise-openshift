@@ -1,0 +1,17 @@
+---
+- name: Read recorded lease owner
+  ansible.builtin.slurp:
+    src: "{{ dify_root }}/.ansible-run/owner.json"
+  register: dify_lease_owner
+  no_log: true
+
+- name: Verify lease identity before release
+  ansible.builtin.assert:
+    that: (dify_lease_owner.content | b64decode | from_json).runId == dify_run_id
+    quiet: true
+  no_log: true
+
+- name: Release owned lease directory
+  ansible.builtin.file:
+    path: "{{ dify_root }}/.ansible-run"
+    state: absent

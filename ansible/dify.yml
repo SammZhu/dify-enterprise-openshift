@@ -1,12 +1,132 @@
 ---
-- name: Deploy and verify offline Dify on the accepted Workshop cluster
-  hosts: jump
+- name: Discover customer inputs from the RHDP validation environment
+  hosts: highside
   gather_facts: false
   any_errors_fatal: true
   tasks:
-    - name: Run Dify automation
-      ansible.builtin.import_tasks: tasks/workflow.yml
+    - name: Require one Jump and one Highside
+      ansible.builtin.assert:
+        that:
+          - groups.jump | length == 1
+          - groups.highside | length == 1
+          - rhdp_dify_stages | length > 0
+          - rhdp_dify_stages | unique | length == rhdp_dify_stages | length
+          - rhdp_dify_stages == ['preflight', 'tools', 'prepare', 'transfer', 'network', 'services', 'import', 'install', 'check'] | select('in', rhdp_dify_stages) | list
+        quiet: true
+
+    - name: Inspect the accepted RHDP cluster marker
+      ansible.builtin.stat:
+        path: "{{ rhdp_cluster_remote_dir }}/ready.json"
+      register: rhdp_cluster_ready
+      when: not ansible_check_mode
+
+    - name: Require completed cluster acceptance before Dify validation
+      ansible.builtin.assert:
+        that: rhdp_cluster_ready.stat.isreg | default(false)
+        quiet: true
+      when: not ansible_check_mode
+
+    - name: Read cluster inputs without changing it
+      ansible.builtin.command:
+        argv: "{{ [rhdp_cluster_remote_dir + '/payload/oc', '--kubeconfig', rhdp_cluster_remote_dir + '/cluster/auth/kubeconfig'] + item }}"
+      loop:
+        - [get, clusterversion, version, -o, json]
+        - [get, ingress.config.openshift.io, cluster, -o, json]
+        - [config, current-context]
+      register: rhdp_customer_probe
+      changed_when: false
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Read the service host DNS
+      ansible.builtin.command:
+        argv: [hostname, -f]
+      register: rhdp_customer_hostname
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Expose customer installation parameters to Jump
+      ansible.builtin.set_fact:
+        rhdp_customer_version: "{{ (rhdp_customer_probe.results[0].stdout | from_json).status.desired.version }}"
+        rhdp_customer_domain: "{{ (rhdp_customer_probe.results[1].stdout | from_json).spec.domain }}"
+        rhdp_customer_context: "{{ rhdp_customer_probe.results[2].stdout | trim }}"
+        rhdp_customer_registry_host: "{{ rhdp_customer_hostname.stdout | trim }}"
+      when: not ansible_check_mode
+      no_log: true
+
+- name: Prepare customer media on Jump and transfer the sealed bundle
+  hosts: jump
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [customer-defaults.yml]
+  vars:
+    customer_source_dir: "{{ rhdp_source_dir }}"
+    customer_media_root: "{{ rhdp_dify_work_dir }}"
+    customer_source_authfile: "{{ rhdp_source_authfile }}"
+    customer_ocp_version: "{{ hostvars[rhdp_highside_host].rhdp_customer_version }}"
+    customer_apps_domain: "{{ hostvars[rhdp_highside_host].rhdp_customer_domain }}"
+    customer_registry_host: "{{ hostvars[rhdp_highside_host].rhdp_customer_registry_host }}"
+    customer_storage_class: "{{ rhdp_storage_class | default('gp3-csi') }}"
+    customer_values_overlay: "{{ rhdp_values_overlay | default('', true) }}"
+  tasks:
+    - name: Invoke the customer preparation role without a separate Demo engine
+      ansible.builtin.include_role:
+        name: dify_offline
       vars:
-        rhdp_stack: dify
-        rhdp_stages: "{{ rhdp_dify_stages }}"
-        rhdp_all_stages: ['preflight', 'tools', 'prepare', 'transfer', 'network', 'services', 'import', 'install', 'check']
+        customer_mode: prepare
+        customer_all_stages: [preflight, tools, export, controller, package]
+        customer_stages: "{{ ['preflight'] + (['tools'] if 'tools' in rhdp_dify_stages else []) + (['export', 'controller', 'package'] if 'prepare' in rhdp_dify_stages else []) }}"
+      when: not ansible_check_mode and rhdp_dify_stages | intersect(['preflight', 'tools', 'prepare']) | length > 0
+
+    - name: Validate destination paths before transferring
+      ansible.builtin.include_role:
+        name: dify_offline
+        tasks_from: paths
+        apply:
+          delegate_to: "{{ rhdp_highside_host }}"
+      vars:
+        customer_mode: install
+        dify_root: "{{ rhdp_dify_remote_dir }}"
+        dify_bundle: "{{ rhdp_dify_remote_dir }}/bundle"
+      when: "'transfer' in rhdp_dify_stages and not ansible_check_mode"
+
+    - name: Create the validated destination
+      ansible.builtin.file:
+        path: "{{ rhdp_dify_remote_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: "{{ rhdp_highside_host }}"
+      when: "'transfer' in rhdp_dify_stages and not ansible_check_mode"
+
+    - name: Transfer under the same Highside state lease as customer installation
+      ansible.builtin.include_tasks: tasks/rhdp-transfer.yml
+      when: "'transfer' in rhdp_dify_stages and not ansible_check_mode"
+
+- name: Validate customer deployment through the existing Highside connection
+  hosts: highside
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  vars_files: [customer-defaults.yml]
+  vars:
+    customer_bundle_dir: "{{ rhdp_dify_remote_dir }}/bundle"
+    customer_state_root: "{{ rhdp_dify_remote_dir }}"
+    customer_kubeconfig: "{{ rhdp_cluster_remote_dir }}/cluster/auth/kubeconfig"
+    customer_context: "{{ rhdp_customer_context }}"
+  tasks:
+    - name: Configure RHDP-only private service network access
+      ansible.builtin.include_tasks: tasks/rhdp-network.yml
+      when: "'network' in rhdp_dify_stages and not ansible_check_mode"
+
+    - name: Invoke the same customer installation and acceptance role
+      ansible.builtin.include_role:
+        name: dify_offline
+      vars:
+        customer_mode: install
+        customer_all_stages: [preflight, verify, services, import, install, check]
+        customer_stages: "{{ ['preflight', 'verify'] + (['services', 'import', 'install', 'check'] | select('in', rhdp_dify_stages) | list) }}"
+      when: not ansible_check_mode and rhdp_dify_stages | intersect(['services', 'import', 'install', 'check']) | length > 0
+
+    - name: Explain validation scope
+      ansible.builtin.debug:
+        msg: RHDP invokes customer tasks. License activation, plugin/model and RAG acceptance remain separate.

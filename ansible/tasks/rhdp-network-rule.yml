@@ -1,0 +1,9 @@
+---
+- name: Detect an existing exact private service rule
+  ansible.builtin.set_fact:
+    rhdp_matching_rules: "{{ ((rhdp_network_groups.stdout | from_json).SecurityGroups | selectattr('GroupId', 'equalto', rhdp_target_sg) | first).IpPermissions | selectattr('IpProtocol', 'equalto', 'tcp') | selectattr('FromPort', 'defined') | selectattr('FromPort', 'equalto', rhdp_service_rule[0]) | selectattr('ToPort', 'equalto', rhdp_service_rule[0]) | map(attribute='UserIdGroupPairs') | flatten | selectattr('GroupId', 'equalto', rhdp_service_rule[1]) | list }}"
+
+- name: Authorize the missing group-to-group service port without CIDR or egress changes
+  ansible.builtin.command:
+    argv: "{{ rhdp_aws + ['ec2', 'authorize-security-group-ingress', '--group-id', rhdp_target_sg, '--ip-permissions', [{'IpProtocol': 'tcp', 'FromPort': rhdp_service_rule[0], 'ToPort': rhdp_service_rule[0], 'UserIdGroupPairs': [{'GroupId': rhdp_service_rule[1], 'Description': 'RHDP Dify private service'}]}] | to_json] }}"
+  when: rhdp_matching_rules | length == 0

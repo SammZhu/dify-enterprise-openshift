@@ -1,0 +1,99 @@
+---
+# Run from an existing Ansible controller; target uses its system Python 3.9+.
+- name: Prepare OS prerequisites for customer offline Dify
+  hosts: "{{ prerequisite_target }}"
+  become: true
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    prerequisite_mode: repositories
+    prerequisite_rpm_dir: ''
+    prerequisite_packages:
+      - podman
+      - openssl
+      - httpd-tools
+      - tar
+      - python3.12
+      - python3.12-pip
+  tasks:
+    - name: Read minimal OS facts through the existing system Python
+      ansible.builtin.setup:
+        gather_subset: ['!all', min]
+      when: ansible_facts.os_family is not defined
+
+    - name: Validate the supported host and explicit package source mode
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'RedHat'
+          - ansible_facts.distribution_major_version == '9'
+          - ansible_facts.distribution_version is version('9.4', '>=')
+          - ansible_facts.architecture == 'x86_64'
+          - prerequisite_mode in ['repositories', 'local_rpms']
+          - prerequisite_mode != 'repositories' or prerequisite_rpm_dir | length == 0
+        quiet: true
+        fail_msg: Use a RHEL 9.4+ compatible amd64 host and select repositories or local_rpms explicitly; RPM directories require local_rpms mode.
+
+    - name: Read the existing RPM package set without contacting repositories
+      ansible.builtin.package_facts:
+        manager: rpm
+      when: ansible_facts.packages is not defined
+
+    - name: Require existing system DNF bindings for the bootstrap
+      ansible.builtin.assert:
+        that: "'python3-dnf' in ansible_facts.packages"
+        quiet: true
+        fail_msg: The managed host must already provide system Python and python3-dnf; this playbook does not bootstrap a Python-less OS.
+
+    - name: Show the target and package source
+      ansible.builtin.debug:
+        msg:
+          target: "{{ inventory_hostname }}"
+          mode: "{{ prerequisite_mode }}"
+          packages: "{{ prerequisite_packages }}"
+          scope: 'OS prerequisites only. No Dify deployment, cluster changes, pip downloads or Python symlink replacement.'
+
+    - name: Install prerequisites from already configured OS repositories
+      ansible.builtin.dnf:
+        name: "{{ prerequisite_packages }}"
+        state: present
+        install_weak_deps: false
+        disable_gpg_check: false
+      when: prerequisite_mode == 'repositories'
+
+    - name: Prepare prerequisites from supplied offline RPM files
+      ansible.builtin.include_tasks: tasks/host-prerequisites-rpms.yml
+      when: prerequisite_mode == 'local_rpms'
+
+    - name: Read the installed package set after installation
+      ansible.builtin.package_facts:
+        manager: auto
+      when: not ansible_check_mode
+
+    - name: Verify all required OS packages are installed
+      ansible.builtin.assert:
+        that: prerequisite_packages | difference(ansible_facts.packages.keys() | list) | length == 0
+        quiet: true
+        fail_msg: "Missing packages: {{ prerequisite_packages | difference(ansible_facts.packages.keys() | list) }}. Supply the complete RPM set for this OS and architecture."
+      when: not ansible_check_mode
+
+    - name: Verify the installed Python interpreter
+      ansible.builtin.command:
+        argv: [/usr/bin/python3.12, --version]
+      register: prerequisite_python
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify pip for the installed interpreter without downloading anything
+      ansible.builtin.command:
+        argv: [/usr/bin/python3.12, -m, pip, --version]
+      register: prerequisite_pip
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Show verified runtime versions
+      ansible.builtin.debug:
+        msg:
+          python: "{{ prerequisite_python.stdout }}"
+          pip: "{{ prerequisite_pip.stdout }}"
+          next: 'OS preparation finished. Bootstrap offline Ansible from controller-wheels only after verifying the customer media.'
+      when: not ansible_check_mode

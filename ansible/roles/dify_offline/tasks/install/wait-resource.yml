@@ -1,0 +1,24 @@
+---
+- name: Wait for a CRD to be served
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', 'crd/' + dify_wait_resource.metadata.name, '--for=condition=Established', '--timeout=120s'] }}"
+  changed_when: false
+  when: dify_wait_resource.kind == 'CustomResourceDefinition'
+
+- name: Wait for a setup Job to complete
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', 'job/' + dify_wait_resource.metadata.name, '-n', 'dify', '--for=condition=complete', '--timeout=600s'] }}"
+  changed_when: false
+  when: dify_wait_resource.kind == 'Job'
+
+- name: Wait for persistent workloads to roll out
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['rollout', 'status', (dify_wait_resource.kind | lower) + '/' + dify_wait_resource.metadata.name, '-n', 'dify', '--timeout=600s'] }}"
+  changed_when: false
+  when: dify_wait_resource.kind in ['StatefulSet', 'Deployment']
+
+- name: Wait for an existing ODF provisioner to bind the application bucket
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['wait', 'objectbucketclaim/' + dify_wait_resource.metadata.name, '-n', 'dify', '--for=jsonpath={.status.phase}=Bound', '--timeout=600s'] }}"
+  changed_when: false
+  when: dify_wait_resource.kind == 'ObjectBucketClaim'

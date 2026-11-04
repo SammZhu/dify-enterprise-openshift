@@ -1,0 +1,46 @@
+---
+- name: Recheck media before importing images
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Create private registry trust directory
+  ansible.builtin.file:
+    path: "{{ dify_state }}/podman-certs"
+    state: directory
+    mode: '0700'
+
+- name: Copy the retained CA for Podman TLS verification
+  ansible.builtin.copy:
+    src: "{{ dify_state }}/certificates/ca.crt"
+    dest: "{{ dify_state }}/podman-certs/ca.crt"
+    remote_src: true
+    mode: '0644'
+
+- name: Initialize destination digest mapping
+  ansible.builtin.set_fact:
+    dify_image_map: {}
+
+- name: Load and push verified images to the customer registry
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/install/import-image.yml"
+  loop: "{{ dify_lock.images }}"
+  loop_control:
+    loop_var: dify_import_image
+    index_var: dify_image_index
+    label: "{{ dify_import_image.source }}"
+
+- name: Persist destination manifest digests only after all pushes succeed
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/image-map.json"
+    content: "{{ dify_image_map | to_nice_json }}\n"
+    mode: '0600'
+
+- name: Hash the exact imported CA
+  ansible.builtin.stat:
+    path: "{{ dify_state }}/certificates/ca.crt"
+    checksum_algorithm: sha256
+  register: dify_import_ca
+
+- name: Record the bundle and CA used for import
+  ansible.builtin.copy:
+    dest: "{{ dify_state }}/import.yaml"
+    mode: '0600'
+    content: "{{ {'lockSHA256': dify_lock_sha, 'registry': dify_cfg.offline.registry, 'caSHA256': dify_import_ca.stat.checksum} | to_nice_yaml }}"

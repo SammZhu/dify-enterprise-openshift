@@ -1,1 +1,3 @@
+# Test-only compatibility dependency for tests/reference/offline.py.
+# Production media uses ansible/requirements.txt.
 PyYAML==6.0.3

@@ -1,0 +1,8 @@
+---
+- name: Validate controller-generated legacy Endpoints
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/endpoints.yml"
+  when: dify_generated_object.apiVersion == 'v1' and dify_generated_object.kind == 'Endpoints'
+
+- name: Validate the Dify CRD controller leader-election Lease
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/controller-lease.yml"
+  when: dify_generated_object.apiVersion == 'coordination.k8s.io/v1' and dify_generated_object.kind == 'Lease'

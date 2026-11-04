@@ -1,0 +1,15 @@
+---
+- name: Find the endpoint's exact owned Pod UID
+  ansible.builtin.set_fact:
+    dify_endpoint_pods: "{{ dify_reset_objects | selectattr('kind', 'equalto', 'Pod') | selectattr('metadata.uid', 'equalto', dify_endpoint_address.targetRef.uid | default('')) | selectattr('metadata.uid', 'in', dify_owned_uids) | list }}"
+
+- name: Require exact Pod reference, selector labels and observed IP
+  ansible.builtin.assert:
+    that:
+      - dify_endpoint_address.targetRef.kind | default('') == 'Pod'
+      - dify_endpoint_address.targetRef.namespace | default('dify') == 'dify'
+      - dify_endpoint_pods | length == 1
+      - dify_endpoint_address.targetRef.name == dify_endpoint_pods[0].metadata.name
+      - dify_endpoint_services[0].spec.selector | dict2items | difference(dify_endpoint_pods[0].metadata.labels | default({}) | dict2items) | length == 0
+      - dify_endpoint_address.ip in ((dify_endpoint_pods[0].status.podIPs | default([]) | map(attribute='ip') | list) + [dify_endpoint_pods[0].status.podIP | default('')])
+    quiet: true

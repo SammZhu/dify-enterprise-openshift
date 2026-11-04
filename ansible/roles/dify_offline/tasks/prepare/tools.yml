@@ -1,0 +1,48 @@
+---
+- name: Create private tool staging directories
+  ansible.builtin.file:
+    path: "{{ dify_root }}/{{ item }}"
+    state: directory
+    mode: '0700'
+  loop: [tools, tools/bin, tools/extract]
+
+- name: Download pinned Helm with the publisher's checksum
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/helm-v3.16.4-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz
+    checksum: sha256:https://get.helm.sh/helm-v3.16.4-linux-{{ dify_cfg.offline.platform.split('/')[1] }}.tar.gz.sha256sum
+    dest: "{{ dify_root }}/tools/helm.tar.gz"
+    mode: '0600'
+
+- name: Download matching OpenShift client with the publisher's checksum
+  ansible.builtin.get_url:
+    url: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ customer_ocp_version }}/openshift-client-linux-{{ dify_cfg.offline.platform.split('/')[1] }}-rhel9.tar.gz"
+    checksum: "sha256:https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ customer_ocp_version }}/sha256sum.txt"
+    dest: "{{ dify_root }}/tools/oc.tar.gz"
+    mode: '0600'
+
+- name: Extract exact publisher tool members
+  ansible.builtin.command:
+    argv: [tar, -xzf, "{{ dify_root }}/tools/{{ item.archive }}", -C, "{{ dify_root }}/tools/extract", "{{ item.member }}"]
+  loop:
+    - {archive: helm.tar.gz, member: "linux-{{ dify_cfg.offline.platform.split('/')[1] }}/helm"}
+    - {archive: oc.tar.gz, member: oc}
+  changed_when: true
+
+- name: Install extracted tool executables in the private tool directory
+  ansible.builtin.copy:
+    src: "{{ dify_root }}/tools/extract/{{ item.src }}"
+    dest: "{{ dify_root }}/tools/bin/{{ item.name }}"
+    remote_src: true
+    mode: '0700'
+  loop:
+    - {src: "linux-{{ dify_cfg.offline.platform.split('/')[1] }}/helm", name: helm}
+    - {src: oc, name: oc}
+
+- name: Fetch the supported vendor Chart on the connected side
+  ansible.builtin.command:
+    argv: ["{{ dify_root }}/tools/bin/helm", pull, dify-enterprise, --repo, 'https://charts.openshift.io', --version, '3.9.8', --destination, "{{ dify_root }}/tools"]
+    creates: "{{ dify_root }}/tools/dify-enterprise-3.9.8.tgz"
+
+- name: Select the private Helm binary
+  ansible.builtin.set_fact:
+    dify_helm: "{{ dify_root }}/tools/bin/helm"

@@ -1,0 +1,9 @@
+---
+# This profile lives on an existing Ansible controller; target has system Python 3.9+.
+# highside is the Demo inventory group. For customers use a host/group in their inventory.
+prerequisite_target: highside
+# repositories contacts the target's configured OS sources (Demo RHUI if available).
+prerequisite_mode: repositories
+# For an isolated host select local_rpms and the actual directory on that host:
+# prerequisite_mode: local_rpms
+# prerequisite_rpm_dir: /mnt/high-side-data/dify-os-rpms

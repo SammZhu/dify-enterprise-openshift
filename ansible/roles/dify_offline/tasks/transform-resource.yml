@@ -1,0 +1,35 @@
+---
+- name: Serialize one rendered resource for exact image substitution
+  ansible.builtin.set_fact:
+    dify_text: "{{ dify_rendered_resource | to_nice_yaml }}"
+  no_log: true
+
+- name: Map visible image and configuration references
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/map-text.yml"
+
+- name: Decode mapped resource
+  ansible.builtin.set_fact:
+    dify_resource: "{{ dify_text | from_yaml }}"
+  no_log: true
+
+- name: Rewrite plugin configuration stored inside Secret data
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/transform-secret-data.yml"
+  loop: "{{ dify_resource.get('data', {}) | default({}, true) | dict2items }}"
+  loop_control:
+    loop_var: dify_secret_field
+    label: "{{ dify_secret_field.key }}"
+  when: dify_resource.kind == 'Secret'
+
+- name: Add registry authentication to Pod specifications and ServiceAccounts
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/transform-pull-secret.yml"
+
+- name: Fix the reviewed plugin daemon OTLP HTTP port
+  ansible.builtin.set_fact:
+    dify_resource: "{{ dify_resource | combine({'data': {item.key: item.value | regex_replace('-collector-svc:4317$', '-collector-svc:4318')}}, recursive=true) }}"
+  loop: "{{ dify_resource.get('data', {}) | default({}, true) | dict2items }}"
+  when:
+    - dify_resource.kind == 'ConfigMap'
+    - dify_resource.metadata.name == 'dify-dify-enterprise-plugin-daemon-config'
+    - item.key.startswith('OTLP_')
+    - item.value is string
+  no_log: true

@@ -3,23 +3,20 @@
   hosts: jump
   gather_facts: false
   tasks:
-    - name: Read stage markers on both hosts
-      rhdp_phase:
-        stack: dify
-        side: "{{ item }}"
-        operation: status
-        settings:
-          workDir: "{{ rhdp_dify_work_dir }}"
-          remoteDir: "{{ rhdp_dify_remote_dir }}"
-          highside: "{{ rhdp_rsync_target }}"
-      delegate_to: "{{ inventory_hostname if item == 'jump' else rhdp_highside_host }}"
-      loop: [jump, highside]
+    - name: Find historical stage markers without reading credentials
+      ansible.builtin.find:
+        paths: "{{ item.root }}/stages"
+        patterns: '*.json'
+        recurse: false
+      delegate_to: "{{ item.host }}"
+      loop:
+        - {side: jump, root: "{{ rhdp_dify_work_dir }}", host: "{{ inventory_hostname }}"}
+        - {side: highside, root: "{{ rhdp_dify_remote_dir }}", host: "{{ rhdp_highside_host }}"}
       register: rhdp_status
-      no_log: true
 
     - name: Show only completed phase names
       ansible.builtin.debug:
-        msg: "{{ item.item }}: {{ item.stages }}"
+        msg: "{{ item.item.side }}: {{ item.files | map(attribute='path') | map('basename') | list | sort }}. Historical markers do not prove current readiness."
       loop: "{{ rhdp_status.results }}"
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item.item.side }}"

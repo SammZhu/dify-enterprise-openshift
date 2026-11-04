@@ -1,0 +1,143 @@
+---
+- name: Verify exported media before adding the offline controller
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Inspect packaged controller metadata
+  ansible.builtin.assert:
+    that: "'source/scripts/offline.py' not in dify_expected_checksums"
+    fail_msg: Rebuild in a new customer_media_root; older script-based exports cannot be promoted to native customer media.
+    quiet: true
+
+- name: Inspect completed native customer media
+  ansible.builtin.stat:
+    path: "{{ dify_bundle }}/customer-media.json"
+  register: dify_controller_complete
+
+- name: Stage the public Ansible controller independently of the sealed export
+  when: not dify_controller_complete.stat.exists
+  block:
+    - name: Allocate a fresh private controller stage without reusing prior files
+      ansible.builtin.tempfile:
+        path: "{{ dify_root }}"
+        state: directory
+        prefix: controller-staging-
+      register: dify_controller_stage
+
+    - name: Create controller staging directories
+      ansible.builtin.file:
+        path: "{{ dify_controller_stage.path }}/{{ item }}"
+        state: directory
+        mode: '0700'
+      loop: [ansible, controller-wheels]
+
+    - name: Copy public controller entrypoints and examples
+      ansible.builtin.copy:
+        src: "{{ customer_source_dir }}/ansible/{{ item }}"
+        dest: "{{ dify_controller_stage.path }}/ansible/{{ item }}"
+        remote_src: true
+        mode: '0644'
+      loop: [ansible.cfg, requirements.txt, customer-install.yml, customer-defaults.yml, customer-install.example.yml, customer-reset.yml, customer-status.yml, host-prerequisites.yml, host-prerequisites.example.yml]
+
+    - name: Enumerate public native roles and templates without following links
+      ansible.builtin.find:
+        paths:
+          - "{{ customer_source_dir }}/ansible/roles"
+          - "{{ customer_source_dir }}/ansible/templates"
+        recurse: true
+        hidden: true
+        file_type: any
+        follow: false
+      register: dify_controller_sources
+
+    - name: Reject incomplete or symlinked controller sources
+      ansible.builtin.assert:
+        that:
+          - dify_controller_sources.skipped_paths | default({}) | length == 0
+          - dify_controller_sources.files | selectattr('islnk') | list | length == 0
+        quiet: true
+
+    - name: Select only public YAML and Jinja sources excluding local overrides
+      ansible.builtin.set_fact:
+        dify_public_controller_files: "{{ dify_controller_sources.files | selectattr('isreg') | selectattr('path', 'search', '\\.(?:yml|j2)$') | rejectattr('path', 'search', '(?:\\.local\\.|/__pycache__/)') | list }}"
+
+    - name: Create destination directories for whitelisted controller files
+      ansible.builtin.file:
+        path: "{{ dify_controller_stage.path }}/ansible/{{ item | relpath(customer_source_dir + '/ansible') }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ dify_public_controller_files | map(attribute='path') | map('dirname') | unique | list }}"
+      loop_control:
+        label: "{{ item | relpath(customer_source_dir + '/ansible') }}"
+
+    - name: Copy whitelisted controller files without private overrides or caches
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ dify_controller_stage.path }}/ansible/{{ item.path | relpath(customer_source_dir + '/ansible') }}"
+        remote_src: true
+        mode: '0644'
+      loop: "{{ dify_public_controller_files }}"
+      loop_control:
+        label: "{{ item.path | relpath(customer_source_dir + '/ansible') }}"
+
+    - name: Create the prerequisite task directory
+      ansible.builtin.file:
+        path: "{{ dify_controller_stage.path }}/ansible/tasks"
+        state: directory
+        mode: '0755'
+
+    - name: Copy native OS prerequisite tasks
+      ansible.builtin.copy:
+        src: "{{ customer_source_dir }}/ansible/tasks/{{ item }}"
+        dest: "{{ dify_controller_stage.path }}/ansible/tasks/{{ item }}"
+        remote_src: true
+        mode: '0644'
+      loop: [host-prerequisites-rpms.yml]
+
+    - name: Download pinned controller wheels for the same Python ABI
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", -m, pip, download, '--only-binary=:all:', --dest, "{{ dify_controller_stage.path }}/controller-wheels", -r, "{{ dify_controller_stage.path }}/ansible/requirements.txt"]
+      no_log: true
+
+    - name: Publish staged controller artifacts only after successful download
+      ansible.builtin.copy:
+        src: "{{ dify_controller_stage.path }}/{{ item }}"
+        dest: "{{ dify_bundle }}/"
+        remote_src: true
+        mode: preserve
+      loop: [ansible, controller-wheels]
+
+    - name: Write media continuation instructions
+      ansible.builtin.copy:
+        dest: "{{ dify_bundle }}/README.md"
+        mode: '0644'
+        content: |
+          # Dify Enterprise customer offline media
+
+          Continue with [Customer Quick Start](docs/customer-quickstart.md), steps 3–5.
+          Run `ansible/customer-install.yml`; keep this sealed bundle unchanged.
+          [Native task architecture](docs/native-ansible.md).
+          [Reset/reinstall](docs/disconnected-reset.md): `ansible/customer-reset.yml`.
+          OS packages and the controller Python runtime must already be installed.
+
+    - name: Add the current public guides to native customer media
+      ansible.builtin.copy:
+        src: "{{ customer_source_dir }}/docs/{{ item }}"
+        dest: "{{ dify_bundle }}/docs/{{ item }}"
+        remote_src: true
+        mode: '0644'
+      loop: [customer-quickstart.md, host-prerequisites.md, disconnected-reset.md, disconnected-install.md, disconnected-manual.md, disconnected-validation.md, rhdp-dify-offline.md, native-ansible.md]
+
+    - name: Record the bundled controller runtime contract
+      ansible.builtin.copy:
+        dest: "{{ dify_bundle }}/customer-media.json"
+        mode: '0644'
+        content: "{{ {'format': 2, 'difyVersion': '3.9.8', 'ocpVersion': customer_ocp_version, 'platform': dify_cfg.offline.platform, 'hostOS': 'RHEL9', 'controllerPython': '3.12', 'engine': 'ansible-native-v2'} | to_nice_json }}\n"
+
+    - name: Seal the complete customer media
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/seal.yml"
+  always:
+    - name: Remove only this temporary controller stage
+      ansible.builtin.file:
+        path: "{{ dify_controller_stage.path }}"
+        state: absent
+      when: dify_controller_stage is defined

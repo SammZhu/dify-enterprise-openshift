@@ -1,0 +1,85 @@
+---
+- name: Read namespaced API resource types without hiding permission failures
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['api-resources', '--namespaced=true', '--verbs=list,delete', '-o', 'name'] }}"
+  register: dify_reset_api_types
+  changed_when: false
+
+- name: List every discovered namespaced resource including custom resources
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', item, '-n', 'dify', '-o', 'json'] }}"
+  loop: "{{ dify_reset_api_types.stdout.split() | unique | sort }}"
+  register: dify_reset_api_objects
+  changed_when: false
+  no_log: true
+
+- name: Combine complete API inventory
+  ansible.builtin.set_fact:
+    dify_reset_objects: "{{ dify_reset_api_objects.results | map(attribute='stdout') | map('from_json') | map(attribute='items') | flatten }}"
+    dify_helm: "{{ dify_bundle }}/bin/helm"
+    dify_chart: "{{ dify_bundle }}/dify-enterprise.tgz"
+    dify_components: "{{ dify_bundle }}/source/examples/helm/components"
+    dify_expected_keys: []
+    dify_expected_pvcs: []
+    dify_owned_uids: []
+    dify_graph_round: 0
+    dify_reset_volumes: []
+  no_log: true
+
+- name: Render the same installation resource contract for ownership checks
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/render.yml"
+
+- name: Record canonical resource identities from the actual Charts
+  ansible.builtin.set_fact:
+    dify_expected_keys: "{{ dify_expected_keys + [(item.apiVersion.split('/')[0] if '/' in item.apiVersion else '') + '/' + item.kind + '/' + item.metadata.name] }}"
+  loop: "{{ dify_groups.values() | flatten }}"
+  no_log: true
+
+- name: Derive PVC names from StatefulSet claim templates and replica counts
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/expected-pvcs.yml"
+  loop: "{{ dify_groups.values() | flatten | selectattr('kind', 'equalto', 'StatefulSet') | list }}"
+  loop_control:
+    loop_var: dify_expected_sts
+    label: "{{ dify_expected_sts.metadata.name }}"
+
+- name: Prove explicit manifests, generated credentials and platform defaults
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/classify-root.yml"
+  loop: "{{ dify_reset_objects }}"
+  loop_control:
+    loop_var: dify_classify_object
+  no_log: true
+
+- name: Prove transitive UID ownership without inferring ownership from names
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/graph-pass.yml"
+  vars:
+    dify_graph_depth: 0
+
+- name: Validate legacy Service Endpoints and the Dify controller Lease
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/classify-generated.yml"
+  loop: "{{ dify_reset_objects | rejectattr('metadata.uid', 'in', dify_owned_uids) | list }}"
+  loop_control:
+    loop_var: dify_generated_object
+  no_log: true
+
+- name: Refuse foreign namespace resources
+  ansible.builtin.assert:
+    that: dify_reset_objects | rejectattr('metadata.uid', 'in', dify_owned_uids) | list | length == 0
+    fail_msg: "Foreign namespace resources block reset: {{ dify_reset_objects | rejectattr('metadata.uid', 'in', dify_owned_uids) | map(attribute='metadata.name') | list }}"
+    quiet: true
+
+- name: Verify PV claim identity and collect reclaim policies
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/volume.yml"
+  loop: "{{ dify_reset_objects | selectattr('kind', 'equalto', 'PersistentVolumeClaim') | selectattr('spec.volumeName', 'defined') | list }}"
+  loop_control:
+    loop_var: dify_reset_pvc
+    label: "{{ dify_reset_pvc.metadata.name }}"
+
+- name: Build non-secret reviewed namespace object inventory
+  ansible.builtin.set_fact:
+    dify_reset_object_records: []
+
+- name: Record UIDs of every namespace object except transient Events
+  ansible.builtin.set_fact:
+    dify_reset_object_records: "{{ dify_reset_object_records + [{'apiVersion': item.apiVersion, 'kind': item.kind, 'name': item.metadata.name, 'uid': item.metadata.uid}] }}"
+  loop: "{{ dify_reset_objects | rejectattr('kind', 'equalto', 'Event') | sort(attribute='metadata.name') | sort(attribute='kind') | sort(attribute='apiVersion') }}"
+  no_log: true

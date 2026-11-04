@@ -5,15 +5,15 @@ covering customer environments and Red Hat Demo Platform (RHDP) demonstrations.
 The repository includes online GitOps deployment and disconnected deployment
 using a standalone Podman host, local Helm charts and offline media.
 
-Customers can start with the [offline Quick Start](docs/customer-quickstart.md). For repeatable installation exercises, see the [Ansible reset and reinstall guide](docs/disconnected-reset.md).
+Customers can start with the [offline Quick Start](docs/customer-quickstart.md). Customer media, installation, reset and acceptance use native YAML tasks in one shared Ansible role; RHDP adapts that same customer workflow for validation. See the [implementation and state protections](docs/native-ansible.md). Missing OS prerequisites can be prepared from an existing controller with the [native host prerequisites playbook](docs/host-prerequisites.md). For repeatable installation exercises, see the [Ansible reset and reinstall guide](docs/disconnected-reset.md).
 RHDP [Field Sourced Content](https://github.com/rhpds/field-sourced-content-template)
 is one deployment scenario; Demo cluster provisioning is maintained separately in
 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation).
 
 Version coverage is recorded per workflow and expands as additional versions are
 adapted and validated. The current offline profile targets Dify Enterprise 3.9.8
-and OpenShift 4.20/4.21; actual deployment/restart validation is recorded for
-OpenShift 4.20.8. See the [offline validation scope](docs/customer-quickstart.md#当前验证边界)
+and OpenShift 4.20/4.21. Deployment/restart records for OpenShift 4.20.8
+belong to the previous implementation; the native YAML rewrite still needs a full field run. See the [offline validation scope](docs/customer-quickstart.md#当前验证边界)
 before treating a version or customer topology as validated.
 
 **Online GitOps demonstration status: verified end to end.** All 16 Dify components run, plugins build
@@ -107,13 +107,11 @@ run in-cluster, so budget for all of it.
 
 ### Disconnected customer environments (no existing Git or registry)
 
-Demo environment provisioning is maintained in the separate private repository [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation). Its Ansible `cluster.yml` builds and validates the internal SNO in the RHDP OpenShift Disconnected Workshop. This repository contains Dify application deployment only.
+Start with the [customer Quick Start (Chinese)](docs/customer-quickstart.md). Its [automation overview](docs/customer-quickstart.md#先理解自动化如何工作) explains media preparation, local services and cluster access. Run `ansible/customer-prepare.yml` on a connected RHEL9 amd64 host, transfer the archive, then run the packaged `ansible/customer-install.yml` on the offline Podman host. One native Ansible Role manages local Charts, OCI archives, a TLS Registry, a wheel index, local S3 and deployment checks. It requires an existing OpenShift cluster, without Git services, a pre-existing registry, RHDP identity files or AWS access. The archive includes the offline Ansible wheelhouse.
 
-For Dify deployment on an accepted workshop cluster, [the Dify Ansible playbook](docs/rhdp-dify-offline.md) chains the connected-side export, transfer, local Podman services, Helm installation and deployment checks. Deployment acceptance passed on OpenShift 4.20.8 with 19 Ready runtime Pods, PostgreSQL/Redis checks, authenticated TLS S3 roundtrip and HTTPS entry checks. The services phase also installs a dedicated systemd unit for host boot recovery. License, models, plugins and RAG remain unverified; see the recorded scope and recovery steps.
+Reset/reinstall uses [customer-reset.yml](docs/disconnected-reset.md). External S3/ODF and arm64 use the same Role's [advanced configuration](docs/disconnected-manual.md), with their field-validation limits stated explicitly. The [acceptance checklist](docs/disconnected-validation.md) covers deployment and the separate License, plugin, model and RAG checks.
 
-An additional local installation path uses one Linux Podman host to provide a TLS container registry and Python wheel index. It carries local Helm charts, source, OCI image archives, approved plugins and optional model files into an existing disconnected OpenShift cluster, without ArgoCD or a Git server.
-
-Customers: start with the [customer Quick Start (Chinese)](docs/customer-quickstart.md). Its opening [automation overview](docs/customer-quickstart.md#先理解自动化如何工作) explains media preparation, offline services and how the cluster uses them. Run `ansible/customer-prepare.yml` on a connected RHEL9 amd64 host to produce the archive, then run the packaged `ansible/customer-install.yml` on the offline Podman host. This profile uses an existing amd64 OpenShift cluster and local S3; it requires neither a Git server nor an existing registry, RHDP identity files or AWS access. The archive includes the offline Ansible wheelhouse. For RHDP use the [Workshop Ansible guide](docs/disconnected-install.md) and `ansible/dify.yml`. Other architectures/external S3 remain in the [manual engine reference](docs/disconnected-manual.md). The [acceptance checklist](docs/disconnected-validation.md) distinguishes verified Workshop deployment/restart checks from unverified License, plugin, model and RAG functions. The online Demo procedure below remains available.
+RHDP is a validation adapter: [dify.yml](docs/rhdp-dify-offline.md) discovers Workshop inputs, transfers the same customer media and invokes that Role. Demo cluster provisioning remains in private [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation). Historical OpenShift 4.20.8 deployment/restart results belong to the previous implementation; the native rewrite still needs a complete field run. The online GitOps demonstration below is a separate workflow.
 
 ### Online Demo / GitOps
 
@@ -152,7 +150,7 @@ release gets marked `failed`. This applies to any chart on OpenShift that
 manages `imagePullSecrets`, not just Dify's.
 
 
-### Checking readiness first
+### Online Demo: checking readiness first
 
 ```bash
 ./scripts/preflight-check.sh dify          # read-only diagnosis
@@ -182,7 +180,7 @@ refuses to do is printed with the reason. Failures that need a human — an
 OpenShift version outside the certification matrix, PVCs stuck Pending, a
 LiteMaaS key scoped to one model — are called out as such rather than retried.
 
-### Plugin CRDs
+### Online Demo: plugin CRDs
 
 The plugin system is CRD-driven, and the CRD is **not** among the certified
 images — it ships as a separate commercial chart that cannot live in this public

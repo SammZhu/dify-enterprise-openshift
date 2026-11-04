@@ -1,0 +1,165 @@
+---
+- name: Verify sealed media before planning destructive operations
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/verify.yml"
+
+- name: Require the dedicated Dify and local S3 profile
+  ansible.builtin.assert:
+    that:
+      - dify_cfg.namespace == 'dify'
+      - dify_cfg.offline.localS3.enabled | bool
+    quiet: true
+
+- name: Read live cluster identity and namespace
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get'] + item + ['-o', 'json'] }}"
+  loop:
+    - [clusterversion, version]
+    - [ingress.config.openshift.io, cluster]
+    - [namespace, dify, --ignore-not-found]
+  register: dify_reset_target
+  changed_when: false
+  no_log: true
+
+- name: Record the live installation identity
+  ansible.builtin.set_fact:
+    dify_reset_identity:
+      clusterID: "{{ (dify_reset_target.results[0].stdout | from_json).spec.clusterID }}"
+      context: "{{ customer_context }}"
+      configSHA256: "{{ dify_expected_checksums['config.yaml'] }}"
+      imagesSHA256: "{{ dify_lock_sha }}"
+      stateRoot: "{{ dify_root }}"
+      bundleDir: "{{ dify_bundle }}"
+    dify_reset_ns: "{{ dify_reset_target.results[2].stdout | default('null', true) | from_json }}"
+  no_log: true
+
+- name: Require the actual cluster ingress domain
+  ansible.builtin.assert:
+    that: (dify_reset_target.results[1].stdout | from_json).spec.domain == dify_cfg.deployer.domain
+    quiet: true
+
+- name: Inspect customer and legacy RHDP bindings
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/{{ item }}"
+    follow: false
+  loop: [customer-binding.json, binding.json, state, reset-runs]
+  register: dify_reset_bindings
+
+- name: Refuse unbound or symlinked state
+  ansible.builtin.assert:
+    that:
+      - dify_reset_bindings.results[0].stat.exists or dify_reset_bindings.results[1].stat.exists
+      - dify_reset_bindings.results | selectattr('stat.islnk', 'defined') | selectattr('stat.islnk') | list | length == 0
+    quiet: true
+
+- name: Read accepted installation binding
+  ansible.builtin.slurp:
+    src: "{{ dify_root }}/{{ 'customer-binding.json' if dify_reset_bindings.results[0].stat.exists else 'binding.json' }}"
+  register: dify_reset_binding_file
+  no_log: true
+
+- name: Require customer binding to match the actual target
+  ansible.builtin.assert:
+    that: (dify_reset_binding_file.content | b64decode | from_json) == dify_reset_identity | dict2items | rejectattr('key', 'in', ['stateRoot', 'bundleDir']) | items2dict
+    quiet: true
+  when: dify_reset_bindings.results[0].stat.exists
+  no_log: true
+
+- name: Validate legacy RHDP binding without assuming its paths
+  ansible.builtin.assert:
+    that:
+      - binding.identity.clusterID == dify_reset_identity.clusterID
+      - binding.identity.domain == dify_cfg.deployer.domain
+      - binding.settings.remoteDir == dify_root
+      - binding.identity.highside.hostname == dify_cfg.offline.registry.split(':')[0]
+    quiet: true
+  vars:
+    binding: "{{ dify_reset_binding_file.content | b64decode | from_json }}"
+  when: not dify_reset_bindings.results[0].stat.exists
+  no_log: true
+
+- name: Inspect namespace installer marker when the namespace still exists
+  ansible.builtin.command:
+    argv: "{{ dify_oc + ['get', 'configmap', 'dify-offline-install', '-n', 'dify', '-o', 'json'] }}"
+  register: dify_reset_marker
+  changed_when: false
+  when: dify_reset_ns is not none and dify_reset_ns.metadata.deletionTimestamp is not defined
+
+- name: Require the exact matching installer marker
+  ansible.builtin.assert:
+    that: >-
+      (dify_reset_marker.stdout | from_json).data == {'installer': 'offline-v1', 'lockSHA256': dify_lock_sha}
+    quiet: true
+  when: dify_reset_ns is not none and dify_reset_ns.metadata.deletionTimestamp is not defined
+
+- name: Prove ownership of every named local service
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/service-inventory.yml"
+
+- name: Inspect boot unit without following symlinks
+  ansible.builtin.stat:
+    path: /etc/systemd/system/dify-offline-services.service
+    follow: false
+    checksum_algorithm: sha256
+  register: dify_reset_unit
+
+- name: Read existing boot unit for exact ownership comparison
+  ansible.builtin.slurp:
+    src: /etc/systemd/system/dify-offline-services.service
+  register: dify_reset_unit_text
+  when: dify_reset_unit.stat.exists
+
+- name: Refuse a changed, symlinked or unowned boot unit
+  ansible.builtin.assert:
+    that:
+      - not dify_reset_unit.stat.islnk | default(false)
+      - dify_reset_unit_text.content | b64decode == lookup('template', playbook_dir + '/templates/dify-offline-services.service.j2')
+    quiet: true
+  vars:
+    dify_service_state: "{{ dify_state }}"
+    dify_service_bundle: "{{ dify_bundle }}"
+  when: dify_reset_unit.stat.exists
+
+- name: Inspect data directory inode and filesystem identities
+  ansible.builtin.stat:
+    path: "{{ dify_state }}/{{ item }}"
+    follow: false
+  loop: "{{ ['s3-data', 'registry-data'] if customer_reset_mode == 'full' else ['s3-data'] }}"
+  register: dify_reset_data_stats
+
+- name: Require real data directories
+  ansible.builtin.assert:
+    that:
+      - item.stat.isdir | default(false)
+      - not item.stat.islnk | default(false)
+    quiet: true
+  loop: "{{ dify_reset_data_stats.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Inventory mounted filesystems without modifying them
+  ansible.builtin.command:
+    argv: [findmnt, --json, --list, --output, TARGET]
+  register: dify_reset_mounts
+  changed_when: false
+
+- name: Reject any nested mount beneath selected data directories
+  ansible.builtin.assert:
+    that: (dify_reset_mounts.stdout | from_json).filesystems | selectattr('target', 'match', '^' + (item.stat.path | regex_escape) + '/') | list | length == 0
+    quiet: true
+  loop: "{{ dify_reset_data_stats.results }}"
+  loop_control:
+    label: "{{ item.stat.path }}"
+
+- name: Inspect all local container mounts to detect shared data
+  ansible.builtin.command:
+    argv: "{{ dify_podman + ['ps', '-a', '--format', 'json'] }}"
+  become: true
+  register: dify_all_containers
+  changed_when: false
+  no_log: true
+
+- name: Reject another container sharing selected data
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/shared-mount.yml"
+  loop: "{{ dify_all_containers.stdout | from_json }}"
+  loop_control:
+    loop_var: dify_other_container
+  when: dify_other_container.Id not in (dify_service_containers.values() | map(attribute='Id') | list)

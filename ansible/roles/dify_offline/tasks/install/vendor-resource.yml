@@ -1,0 +1,12 @@
+---
+- name: Transform rendered images and encoded runtime configuration
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/transform-resource.yml"
+
+# Helm evaluates this single literal, not braces embedded in ConfigMaps. Hook
+# annotations remain on the decoded manifest, so Helm manages hooks normally.
+- name: Store the transformed manifest as an opaque Helm template literal
+  ansible.builtin.copy:
+    dest: "{{ dify_derived_chart.path }}/templates/{{ '%04d' | format(dify_manifest_index) }}.yaml"
+    mode: '0600'
+    content: "{{ '{{' }} {{ dify_resource | to_nice_yaml | b64encode | to_json }} | b64dec {{ '}}' }}\n"
+  no_log: true

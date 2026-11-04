@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import ansible.module_utils
 ROOT = Path(__file__).resolve().parents[1]
-ansible.module_utils.__path__.insert(0, str(ROOT / 'ansible/module_utils'))
+ansible.module_utils.__path__.insert(0, str(ROOT / 'tests/reference'))
 r = importlib.import_module('ansible.module_utils.customer_reset')
 from test_customer_delivery import params
 
@@ -28,7 +28,7 @@ class Fixture(r.Reset):
         r.common.offline.write(bundle/'config.yaml', prep.config())
         (bundle/'images.lock.yaml').write_text('fixture-lock')
         (bundle/'source/scripts').mkdir(parents=True)
-        (bundle/'source/scripts/offline.py').write_bytes((ROOT/'scripts/offline.py').read_bytes())
+        (bundle/'source/scripts/offline.py').write_bytes((ROOT/'tests/reference/offline.py').read_bytes())
         (bundle/'source/examples').mkdir()
         state=Path(p['state_root']); (state/'state/s3-data').mkdir(parents=True)
         (state/'state/registry-data').mkdir()
@@ -282,7 +282,7 @@ class ResetTests(unittest.TestCase):
         import sys
         with tempfile.TemporaryDirectory() as td:
             source=Path(td); (source/'scripts').mkdir()
-            (source/'scripts/offline.py').write_bytes((ROOT/'scripts/offline.py').read_bytes())
+            (source/'scripts/offline.py').write_bytes((ROOT/'tests/reference/offline.py').read_bytes())
             previous=sys.dont_write_bytecode; r.common.bind_source(source)
             self.assertEqual(sys.dont_write_bytecode,previous)
             self.assertFalse((source/'scripts/__pycache__').exists())
@@ -299,7 +299,7 @@ class NativeResetPreviewTests(unittest.TestCase):
             p.update(state_root=str(base/'highside'),bundle_dir=str(base/'highside/bundle'))
             prep=r.delivery.CustomerWorkflow('prepare',p)
             bundle=Path(p['bundle_dir']); (bundle/'source/scripts').mkdir(parents=True)
-            shutil.copy2(ROOT/'scripts/offline.py',bundle/'source/scripts/offline.py')
+            shutil.copy2(ROOT/'tests/reference/offline.py',bundle/'source/scripts/offline.py')
             shutil.copytree(ROOT/'examples',bundle/'source/examples')
             shutil.copy2(os.environ['DIFY_TEST_CHART'],bundle/'dify-enterprise.tgz')
             bins=bundle/'bin'; bins.mkdir(); (bundle/'pypi').mkdir()
@@ -317,7 +317,7 @@ class NativeResetPreviewTests(unittest.TestCase):
                 'settings':{'remoteDir':str(state)}}))
             config=base/'install.yml'; config.write_text(r.common.offline.yaml.safe_dump({
                 'customer_bundle_dir':str(bundle),'customer_state_root':str(state),
-                'customer_kubeconfig':p['kubeconfig'],'customer_context':p['context']}))
+                'customer_kubeconfig':p['kubeconfig'],'customer_context':p['context'],'ansible_become':False}))
             log=base/'calls.jsonl'
             data={'domain':prep.config()['deployer']['domain'],'lockSHA256':binding['imagesSHA256'],
                   'state':str(state/'state'),'bundle':str(bundle),'log':str(log)}
@@ -363,9 +363,11 @@ else:
  else:raise RuntimeError('preview attempted mutation')
  print(json.dumps(out))
 '''); script.chmod(0o700)
+            (bins/'findmnt').write_text('#!'+sys.executable+'\nprint(\'{"filesystems": []}\')\n')
+            (bins/'findmnt').chmod(0o700)
             r.common.offline.seal(bundle)
             before={str(f.relative_to(state)):f.read_bytes() for f in state.rglob('*') if f.is_file()}
-            env=dict(os.environ,ANSIBLE_LOCAL_TEMP=str(base/'ansible-local'),ANSIBLE_REMOTE_TEMP=str(base/'ansible-remote'))
+            env=dict(os.environ,PATH=str(bins)+':'+os.environ['PATH'],ANSIBLE_LOCAL_TEMP=str(base/'ansible-local'),ANSIBLE_REMOTE_TEMP=str(base/'ansible-remote'))
             playbook=Path(sys.executable).parent/'ansible-playbook'
             command=[str(playbook),'-i','localhost,','customer-reset.yml','-e','@'+str(config)]
             for extra in ([],['--check','-e','customer_reset_execute=true']):

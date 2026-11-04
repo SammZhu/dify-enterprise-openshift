@@ -1,0 +1,3 @@
+---
+# Explicit base keeps nested tasks_from entries independent of include search paths.
+dify_tasks_dir: "{{ role_path }}/tasks"

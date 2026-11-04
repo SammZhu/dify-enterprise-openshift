@@ -1,0 +1,18 @@
+---
+- name: Remember ownership set before one bounded graph pass
+  ansible.builtin.set_fact:
+    dify_previous_owned: "{{ dify_owned_uids | length }}"
+    dify_graph_round: "{{ dify_graph_round | default(0) | int + 1 }}"
+
+- name: Prove child UIDs through live ownerReferences
+  ansible.builtin.set_fact:
+    dify_owned_uids: "{{ (dify_owned_uids + [item.metadata.uid]) | unique }}"
+  loop: "{{ dify_reset_objects }}"
+  when: item.metadata.ownerReferences | default([]) | map(attribute='uid') | intersect(dify_owned_uids) | length > 0
+  no_log: true
+
+- name: Follow additional ownership depth only while the set grows
+  ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/reset/graph-pass.yml"
+  when:
+    - dify_owned_uids | length > dify_previous_owned | int
+    - dify_graph_round | int <= dify_reset_objects | length

@@ -1,0 +1,73 @@
+---
+- name: Read the sealed file manifest
+  ansible.builtin.slurp:
+    src: "{{ dify_bundle }}/checksums.json"
+  register: dify_sealed_manifest
+
+- name: Preserve expected checksums while calculating actual file identities
+  ansible.builtin.set_fact:
+    dify_expected_checksums: "{{ dify_sealed_manifest.content | b64decode | from_json }}"
+
+- name: Enumerate complete bundle file set
+  ansible.builtin.find:
+    paths: "{{ dify_bundle }}"
+    recurse: true
+    hidden: true
+    file_type: any
+    follow: false
+    get_checksum: true
+    checksum_algorithm: sha256
+  register: dify_verify_entries
+
+- name: Reject extra files, missing files and symlinks
+  ansible.builtin.assert:
+    that:
+      - dify_verify_entries.skipped_paths | default({}) | length == 0
+      - dify_verify_entries.files | selectattr('islnk') | list | length == 0
+      - dify_verify_entries.files | rejectattr('isreg') | rejectattr('isdir') | list | length == 0
+      - (dify_verify_entries.files | selectattr('isreg') | map(attribute='path') | map('relpath', dify_bundle) | reject('equalto', 'checksums.json') | sort) == (dify_expected_checksums.keys() | list | sort)
+    quiet: true
+
+- name: Verify every sealed file checksum
+  ansible.builtin.assert:
+    that: dify_checked_file.checksum == dify_expected_checksums[dify_checked_file.path | relpath(dify_bundle)]
+    fail_msg: "Sealed file changed: {{ dify_checked_file.path | relpath(dify_bundle) }}"
+    quiet: true
+  loop: "{{ dify_verify_entries.files | selectattr('isreg') | rejectattr('path', 'equalto', dify_bundle + '/checksums.json') | list }}"
+  loop_control:
+    loop_var: dify_checked_file
+    label: "{{ dify_checked_file.path | relpath(dify_bundle) }}"
+
+- name: Read verified configuration and image lock
+  ansible.builtin.slurp:
+    src: "{{ dify_bundle }}/{{ item }}"
+  loop: [config.yaml, images.lock.yaml]
+  register: dify_verified_metadata
+  no_log: true
+
+- name: Decode verified media metadata
+  ansible.builtin.set_fact:
+    dify_cfg: "{{ dify_verified_metadata.results[0].content | b64decode | from_yaml }}"
+    dify_lock: "{{ dify_verified_metadata.results[1].content | b64decode | from_yaml }}"
+    dify_lock_sha: "{{ dify_verified_metadata.results[1].content | b64decode | hash('sha256') }}"
+  no_log: true
+
+- name: Require a fully exported image lock
+  ansible.builtin.assert:
+    that:
+      - dify_lock.format == 1
+      - dify_lock.status == 'exported'
+      - dify_lock.images | length > 0
+    quiet: true
+
+- name: Validate image archive paths and identities
+  ansible.builtin.assert:
+    that:
+      - item.archive is match('^images/[0-9]+\.tar$')
+      - item.archive in dify_expected_checksums
+      - item.imageId is match('^sha256:[a-f0-9]{64}$')
+      - item.sourceDigest is match('^sha256:[a-f0-9]{64}$')
+    quiet: true
+  loop: "{{ dify_lock.images }}"
+  loop_control:
+    label: "{{ item.source }}"

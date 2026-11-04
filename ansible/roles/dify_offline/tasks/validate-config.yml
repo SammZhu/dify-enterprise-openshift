@@ -1,0 +1,33 @@
+---
+- name: Enforce the supported disconnected profile
+  ansible.builtin.assert:
+    that:
+      - dify_cfg.namespace == 'dify'
+      - dify_cfg.deployer.domain is match('^[A-Za-z0-9.-]+$')
+      - "'example.com' not in dify_cfg.deployer.domain"
+      - dify_cfg.offline.registry is match('^[A-Za-z0-9.-]+:[0-9]+$')
+      - "'example.com' not in dify_cfg.offline.registry"
+      - dify_cfg.offline.pipMirror | urlsplit('scheme') == 'https'
+      - dify_cfg.offline.pipMirror | urlsplit('hostname') == dify_cfg.offline.registry.split(':')[0]
+      - dify_cfg.offline.pipMirror | urlsplit('path') == '/simple/'
+      - dify_cfg.offline.localS3.bucket is match('^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$')
+      - ([dify_cfg.offline.registry.split(':')[1] | int, dify_cfg.offline.pipMirror | urlsplit('port') | int, dify_cfg.offline.localS3.port | int] | unique | length) == 3
+      - ([dify_cfg.offline.registry.split(':')[1] | int, dify_cfg.offline.pipMirror | urlsplit('port') | int, dify_cfg.offline.localS3.port | int] | min) >= 1024
+      - ([dify_cfg.offline.registry.split(':')[1] | int, dify_cfg.offline.pipMirror | urlsplit('port') | int, dify_cfg.offline.localS3.port | int] | max) <= 65535
+      - dify_cfg.offline.platform in ['linux/amd64', 'linux/arm64']
+      - not dify_cfg.offline.localS3.enabled | bool or not dify_cfg.components.objectStorage.enabled | bool
+      - not dify_cfg.offline.localS3.enabled | bool or not dify_cfg.components.minio.enabled | bool
+      - not (dify_cfg.components.objectStorage.enabled | bool and dify_cfg.components.minio.enabled | bool)
+      - not dify_cfg.components.dify.marketplaceEnabled | bool
+      - dify_cfg.components.dify.chart.version | string == '3.9.8'
+      - not dify_cfg.components.clusterMonitoring.enabled | bool
+      - not dify_cfg.components.tracing.enabled | bool
+      - not dify_cfg.components.logging.enabled | bool
+      - not dify_cfg.components.embedder.enabled | bool or (not dify_cfg.components.embedder.pullModel | bool and dify_cfg.components.embedder.modelImage | length > 0)
+    quiet: true
+
+- name: Require prerequisite and application components
+  ansible.builtin.assert:
+    that: dify_cfg.components[item].enabled | bool
+    quiet: true
+  loop: [prereqs, pluginCrds, postgresql, redis, qdrant, dify]

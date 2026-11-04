@@ -1,0 +1,6 @@
+---
+- name: Derive each expected claim ordinal
+  ansible.builtin.set_fact:
+    dify_expected_pvcs: "{{ dify_expected_pvcs + [item[0].metadata.name + '-' + dify_expected_sts.metadata.name + '-' + (item[1] | string)] }}"
+  loop: "{{ dify_expected_sts.spec.volumeClaimTemplates | default([]) | product(range(0, dify_expected_sts.spec.replicas | default(1) | int) | list) | list }}"
+  no_log: true

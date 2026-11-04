@@ -1,3 +1,10 @@
 # Controller Python 3.12+; managed Jump/Highside use RHEL /usr/bin/python3 (3.9+).
-ansible-core>=2.20,<2.21
+ansible-core==2.20.10
 PyYAML==6.0.3
+Jinja2==3.1.6
+cryptography==50.0.2
+packaging==26.3
+resolvelib==1.2.1
+MarkupSafe==3.0.4
+cffi==2.1.1
+pycparser==3.12

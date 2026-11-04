@@ -3,12 +3,14 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  become: true
   vars_files: [customer-defaults.yml]
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Run the provider-independent customer workflow
-      ansible.builtin.import_tasks: tasks/customer-workflow.yml
+      ansible.builtin.include_role:
+        name: dify_offline
       vars:
         customer_mode: install
         customer_stages: "{{ customer_install_stages }}"

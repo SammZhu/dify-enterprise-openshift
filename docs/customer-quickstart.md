@@ -2,7 +2,7 @@
 
 **准备介质用 `customer-prepare.yml`，离线安装用 `customer-install.yml`。** 不需要客户 Git 服务、现成镜像仓库、RHDP 账号、AWS CLI 或 Workshop 的 `ready.json`。这两个 Playbook 在各自主机本地运行；源码可以通过压缩包传入。
 
-本 Quick Start 安装 Dify Enterprise **3.9.8**，namespace/release 固定为 `dify`。单台 Podman 主机同时提供 TLS Registry、HTTPS wheel 索引和持久化本地 S3；适合功能验证与单机交付演练。外部 S3、其他 CPU 架构和高可用拓扑参见[手动适配参考](disconnected-manual.md)，不在本 Quick Start 自动化范围内。Enterprise License、插件依赖和模型介质需要另行准备。
+本 Quick Start 安装 Dify Enterprise **3.9.8**，namespace/release 固定为 `dify`。单台 Podman 主机同时提供 TLS Registry、HTTPS wheel 索引和持久化本地 S3；适合功能验证与单机交付演练。外部 S3、其他 CPU 架构和高可用拓扑参见[高级配置参考](disconnected-manual.md)，不在本 Quick Start 自动化范围内。Enterprise License、插件依赖和模型介质需要另行准备。
 
 ## 先理解自动化如何工作
 
@@ -40,7 +40,7 @@ flowchart LR
 
 ### Ansible 和底层工具如何分工
 
-Ansible Playbook 负责阶段顺序、阶段选择、等待、互斥运行和服务开机管理；每个阶段调用自定义模块完成具体操作。`customer_delivery.py` 提供客户参数和阶段操作，复用服务/验收代码；`scripts/offline.py` 处理 Chart 渲染、镜像导出/导入和 Helm 部署，Shell 助手处理容器启动及清单后处理。操作者执行 Playbook，无需手工串联这些底层助手。
+三个客户 Playbook 直接执行 `ansible/roles/dify_offline/tasks/` 的原生 YAML 任务，使用 Ansible 内置模块及 oc、Helm、Podman 等标准工具；不再调用自定义 Python 模块、Python 安装引擎或 Shell 安装器。RHDP 也调用同一个客户 Role，只负责验证环境的参数发现、传输和私网配置。具体任务分工、镜像与 Chart 处理、清理保护见 [原生 Ansible 实现说明](native-ansible.md)。Ansible 本身仍需要 Python 运行时。
 
 封包 `bundle/` 保持不可变；凭证、证书、导入映射、日志和完成标记写入独立状态目录。重跑时会校验集群绑定与容器归属，复用相同配置的密钥和数据；不会自动接管不属于本安装器的服务或 Helm release。这是安全重跑保护，不代表任意失败都能无条件自动恢复，故障排查方法见第 2、5 步。
 
@@ -55,6 +55,8 @@ Ansible Playbook 负责阶段顺序、阶段选择、等待、互斥运行和服
 | 域名 | OpenShift 实际 `apps` 域；Podman 主机有稳定 DNS 名称，必须从该主机、所有集群节点和 Pod 解析到可达的内网地址 |
 | 网络 | 离线主机可访问集群 API 和 Route；节点与 Pod 可访问该主机 TCP **5000、9443、9444**。客户预先配置防火墙/NetworkPolicy，本流程不自动修改客户网络 |
 | 源凭证 | 联网制作机上有效的容器认证 JSON，覆盖所需源仓库；Dify Enterprise 私有镜像须有合法拉取权限 |
+
+若目标主机尚无 Python 3.12，可由已有 Ansible 控制端先执行 [主机前置准备](host-prerequisites.md)。Demo 使用已配置的 OS 源；完全离线客户可指定目标上的 RPM 目录。该入口是第 0 步的 OS 准备，不会代替第 3 步包内 Ansible wheels 的离线安装。
 
 可在**已有权限的客户集群终端**取得以下参数，再带到联网制作机；制作机本身无需连接客户集群：
 
@@ -122,6 +124,8 @@ cd /opt/dify-enterprise-openshift/ansible
 
 依次执行前置检查、校验并下载 oc/Helm、渲染 Chart、导出 OCI 镜像、下载 Python 3.12 的 Ansible 运行依赖、封包。下载失败应先查工作目录的私有日志；不要把失败的半成品当作就绪介质。镜像导出中断且留下半成品时，保留旧目录排查，换一个 `customer_media_root` 重做，避免混合两次导出。
 
+**升级到原生任务或更新源码后重新制作交付介质，请选择新的 `customer_media_root`。** 已封包的目录保持不可变，pull 源码不会更新旧包内的 Playbook；旧脚本版导出不能与新原生介质混合。既有安装的清理可从新版完整源码运行，具体路径见清理指南。
+
 完成后，只需搬运这两个文件到客户离线机的 `/opt/dify-media/`：
 
 ```text
@@ -166,6 +170,8 @@ customer_context: customer-admin  # 换成 kubeconfig 中客户确认的实际 c
 
 如使用客户签发的 TLS 证书，同时提供 `customer_tls_cert`、`customer_tls_key` 和 `customer_tls_ca`，证书 SAN 必须覆盖 Podman 主机 DNS。未指定时生成并持久保存私有 CA；安装把 CA 合并到 OpenShift 镜像信任配置，不覆盖已有 CA。证书轮换需单独安排，重跑不会自动更换旧密钥。
 
+HTTPS Route 验收使用主机系统根证书及可用的集群 router CA；如果客户 Route 使用另外的私有 CA，在同一 `install.yml` 填写 `customer_route_ca: /root/dify-private/route-ca.crt`。它是 OpenShift Route 的信任证书，与 Podman 服务的 `customer_tls_ca` 分开配置。
+
 ```bash
 cd /opt/dify-media/bundle/ansible
 /opt/dify-ansible/bin/ansible-playbook -i localhost, customer-install.yml \
@@ -204,4 +210,6 @@ cd /opt/dify-media/bundle/ansible
 
 ## 当前验证边界
 
-共享镜像/部署引擎与三服务方案已有 RHDP OpenShift 4.20.8 的部署和重启复验记录，见 [RHDP 实测记录](rhdp-dify-offline.md)。客户入口增加了独立参数和本地编排，不依赖该平台的集群身份文件或云 API；客户全新环境和 4.21 的现场验证情况，尚未完成，不能沿用 RHDP 的实测结论。已通过 54 项本地回归（包含真实 3.9.8 Chart 渲染、封包/校验、集群绑定、清理归属/续跑、数据范围保护及实际 Ansible 只读预览；容器和集群边界采用模拟），以及安装/清理 Playbook 的语法检查和安装入口的无变更计划检查。这些检查不等于客户现场完整安装成功。
+原 Python 实现的三服务部署、重启和清理曾在 RHDP OpenShift 4.20.8 验证，详见 [历史 RHDP 记录](rhdp-dify-offline.md)。本次原生 Ansible 重构的现场全链路重装尚未完成，不能沿用旧实现的现场结论。4.21、arm64、外部对象存储和客户全新环境也尚无本次重构的现场通过记录。
+
+本地回归执行真实 YAML 任务，涵盖真实 3.9.8 Chart 渲染、派生 Chart/hooks、运行时镜像映射、OCI 摘要、封包与校验、客户安装入口、清理执行/续跑/UID 竞争及共享目录保护。Kubernetes、Podman、systemd 和云边界采用受控模拟；这些测试不等于真实 RHEL 软件包事务、容器启动、云资源创建或客户现场完整安装。License 激活、插件、模型调用和 RAG 需要另外验收。

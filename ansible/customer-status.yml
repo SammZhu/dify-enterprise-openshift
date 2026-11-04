@@ -1,0 +1,21 @@
+---
+- name: Read customer installation stage history without modifying state
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files: [customer-defaults.yml]
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Enumerate historical markers only
+      ansible.builtin.find:
+        paths: "{{ customer_state_root }}/stages"
+        patterns: '*.json'
+        recurse: false
+      register: customer_history
+
+    - name: Explain historical scope and live acceptance entry
+      ansible.builtin.debug:
+        msg:
+          completed_stages: "{{ customer_history.files | map(attribute='path') | map('basename') | list | sort }}"
+          next: 'For live acceptance use customer-install.yml with customer_install_stages=[preflight,verify,check].'
