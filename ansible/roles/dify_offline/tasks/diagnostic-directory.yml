@@ -1,0 +1,38 @@
+---
+- name: Inspect the dedicated diagnostic directory without following links
+  ansible.builtin.stat:
+    path: "{{ dify_root }}/{{ dify_log_directory }}"
+    follow: false
+  register: dify_log_directory_stat
+
+- name: Refuse symlinked, non-directory or foreign diagnostic paths
+  ansible.builtin.assert:
+    that:
+      - not dify_log_directory_stat.stat.islnk | default(false)
+      - not dify_log_directory_stat.stat.exists or dify_log_directory_stat.stat.isdir | default(false)
+      - not dify_log_directory_stat.stat.exists or dify_log_directory_stat.stat.uid in [0, dify_root_directory.uid]
+    quiet: true
+    fail_msg: Diagnostic paths must be dedicated directories owned by the state owner or root.
+
+- name: Repair only root-owned diagnostic directories left by older privileged async tasks
+  ansible.builtin.file:
+    path: "{{ dify_root }}/{{ dify_log_directory }}"
+    state: directory
+    owner: "{{ dify_root_directory.uid | string }}"
+    group: "{{ dify_root_directory.gid | string }}"
+    mode: '0700'
+    follow: false
+  become: true
+  when:
+    - dify_log_directory_stat.stat.exists
+    - dify_log_directory_stat.stat.uid == 0
+    - dify_root_directory.uid != 0
+
+- name: Create the diagnostic directory under the state owner's identity
+  ansible.builtin.file:
+    path: "{{ dify_root }}/{{ dify_log_directory }}"
+    state: directory
+    owner: "{{ dify_root_directory.uid | string }}"
+    group: "{{ dify_root_directory.gid | string }}"
+    mode: '0700'
+    follow: false

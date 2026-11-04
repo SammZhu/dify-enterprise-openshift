@@ -15,6 +15,8 @@
     dify_bundle: "{{ customer_media_root + '/bundle' if customer_mode == 'prepare' else customer_bundle_dir }}"
     dify_run_id: "{{ lookup('password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
     dify_podman: [podman, --cgroup-manager=cgroupfs]
+    dify_diagnostics_ready: false
+    dify_error_saved: false
   no_log: true
 
 - name: Validate private paths before creating anything
@@ -34,6 +36,7 @@
         path: "{{ dify_root }}"
         state: directory
         mode: '0700'
+      register: dify_root_directory
 
     - name: Acquire exclusive installer lease atomically without takeover
       ansible.builtin.command:
@@ -47,28 +50,54 @@
         dest: "{{ dify_root }}/.ansible-run/owner.json"
         mode: '0600'
 
+    - name: Prepare private log directories before any privileged asynchronous task
+      ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/diagnostic-directory.yml"
+      loop: [logs, logs/async]
+      loop_control:
+        loop_var: dify_log_directory
+
+    - name: Record that private diagnostic destinations are ready
+      ansible.builtin.set_fact:
+        dify_diagnostics_ready: true
+
     - name: Execute native stages in dependency order
       ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/stage.yml"
       loop: "{{ customer_stages }}"
       loop_control:
         loop_var: dify_stage
   rescue:
-    - name: Create a private diagnostic directory
-      ansible.builtin.file:
-        path: "{{ dify_root }}/logs"
-        state: directory
-        mode: '0700'
-
-    - name: Keep failed command details on the managed host only
-      ansible.builtin.copy:
-        dest: "{{ dify_root }}/logs/last-error.json"
-        content: "{{ ansible_failed_result | to_nice_json }}\n"
-        mode: '0600'
+    - name: Preserve the original failure before attempting diagnostic writes
+      ansible.builtin.set_fact:
+        dify_original_failure: "{{ ansible_failed_result }}"
+        dify_original_task: "{{ ansible_failed_task.name | default('unknown task') }}"
       no_log: true
 
-    - name: Stop the failed workflow without publishing credential-bearing output
+    - name: Try to retain the original failure only in validated private diagnostics
+      block:
+        - name: Require previously validated diagnostic directories
+          ansible.builtin.assert:
+            that: dify_diagnostics_ready | bool
+            quiet: true
+          no_log: true
+
+        - name: Keep original failed command details on the managed host only
+          ansible.builtin.copy:
+            dest: "{{ dify_root }}/logs/last-error.json"
+            content: "{{ dify_original_failure | to_nice_json }}\n"
+            mode: '0600'
+          no_log: true
+
+        - name: Record successful diagnostic persistence
+          ansible.builtin.set_fact:
+            dify_error_saved: true
+      rescue:
+        - name: Report unavailable diagnostics without replacing the original failure
+          ansible.builtin.debug:
+            msg: Private diagnostics could not be saved; the original workflow task still determines failure.
+
+    - name: Stop the original failed workflow without publishing credential-bearing output
       ansible.builtin.fail:
-        msg: "Workflow failed. Inspect private diagnostics at {{ dify_root }}/logs/last-error.json."
+        msg: "Workflow failed in {{ dify_original_task }}. {{ 'Inspect private diagnostics at ' + dify_root + '/logs/last-error.json.' if dify_error_saved | bool else 'Private diagnostics could not be saved; inspect the earlier task failure.' }}"
   always:
     - name: Release only this workflow's lease
       ansible.builtin.include_tasks: "{{ dify_tasks_dir }}/release.yml"

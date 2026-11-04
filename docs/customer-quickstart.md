@@ -275,6 +275,20 @@ cat /mnt/low-side-data/dify-customer-media-native-001/bundle/images.lock.yaml
 
 包内包含 Chart、OCI 镜像与锁文件、oc/Helm、客户 Ansible 入口、控制端 wheels、wheel 索引及文档。源 registry 认证、客户 kubeconfig、目标服务私钥和 Enterprise License 不会自动加入介质。校验文件须通过可信渠道一并交付。
 
+### 2.3 制包失败后的处理
+
+`customer_plugins_dir`、`customer_wheels_dir` 可以不填写；未提供插件 wheels 时仍会生成合法的空 HTML 索引，平台部署制包不应因此失败。若旧版本在 `Generate the public simple index root` 报 `src (or content) is required`，应更新源码使用修复后的任务，不要创建假 wheel 或手工改写 bundle 来绕过错误。
+
+本版在提权异步任务启动前建立私有 `logs/` 和 `logs/async/`；旧运行留下的 root 所有日志目录，只在确认路径是专用普通目录后修正这两个目录的归属，不递归修改文件。正常失败将原始结果写到 `logs/last-error.json`（0600）。若诊断写入也失败，终端仍报告原始失败任务，不再用保存日志的错误替代它。
+
+**失败留下的未封存 bundle 不用于离线安装，也不要在原目录手工补文件后继续。** 保留旧目录，按第 1.2 节更新源码后，在私有 `prepare.yml` 选择新的介质目录，例如本次 RHDP 从 `dify-customer-media-native-001` 改为：
+
+```yaml
+customer_media_root: /mnt/low-side-data/dify-customer-media-native-002
+```
+
+然后按第 2 步重新制包。原 rootful Podman 缓存不需要清理；新一轮仍会按镜像引用检查源并重新导出、校验和封包。若 `last-error.json` 未能写入，以终端中最先出现的业务任务错误及最后报告的原始任务名定位，不把“日志不存在”视为已恢复。
+
 ## 3. 离线 Podman 主机：校验并安装 Ansible 运行环境
 
 **从这里开始在离线 Podman 主机执行，不访问公网，使用上一步已打开的 root shell。** 确认第 0 步的 OS 软件已经装好，先验 checksum，再解包：

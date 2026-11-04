@@ -29,9 +29,10 @@
   loop_control:
     label: "{{ item.path | basename }}"
 
-- name: Initialize plugin lock
+- name: Initialize plugin and wheel inventories
   ansible.builtin.set_fact:
     dify_plugin_lock: []
+    dify_wheel_packages: {}
 
 - name: Record approved plugin checksums
   ansible.builtin.set_fact:
@@ -98,8 +99,11 @@
 - name: Generate the public simple index root
   ansible.builtin.copy:
     content: |
-      {% for name in dify_wheel_packages | default({}) | sort %}
+      <!doctype html>
+      <html><body>
+      {% for name in dify_wheel_packages | sort %}
       <a href="{{ name | e }}/">{{ name | e }}</a><br>
       {% endfor %}
+      </body></html>
     dest: "{{ dify_bundle }}/pypi/simple/index.html"
     mode: '0644'
