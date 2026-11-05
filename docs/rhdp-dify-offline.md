@@ -4,6 +4,8 @@
 
 **2026-11-05 已使用客户原生入口在 RHDP 完成制包、部署及修复后的定向验收**，见下方现场记录。这不代表 `dify.yml` 适配入口、原生清理/重启恢复或修复版新介质的一次完整运行已验证。2026-11-02 的真实部署属于旧实现历史记录，范围见文末。License、插件、模型和 RAG 仍需单独验证。
 
+浏览器访问安装后的 Dify 见 [Quick Start 第 5.2 节](customer-quickstart.md#52-从浏览器访问离线-dify-console)：优先使用 Showroom Desktop 中的 Jump Firefox；本机浏览器可使用经 Jump 的 SSH SOCKS5 隧道，并配置代理 DNS 与 Route CA 信任。
+
 ## 使用 Ansible
 
 Ansible 控制端在联网 Jump 上运行，要求 Python 3.12；Highside 远程模块使用 RHEL `/usr/bin/python3` 3.9+；联网制作控制端使用 Python 3.12，以收集客户离线控制端所需的匹配 wheel。依赖固定在 `ansible/requirements.txt`，无需 Galaxy Collections。依据 [官方 Python 支持矩阵](https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html) 选择版本。

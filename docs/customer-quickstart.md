@@ -476,6 +476,100 @@ cd "$DIFY_REPAIR_SOURCE_DIR/ansible"
 
 成功标志仍是第 5 步的 `failed=0` 和本次生成的 `deployment-ready.json`。修复后新制作的介质已携带新版任务，正常按第 3～5 步操作，不需要本节的额外源码目录。
 
+### 5.2 从浏览器访问离线 Dify Console
+
+第 5 步的 HTTP 200 是离线主机侧验收结果；本机浏览器还需要内网访问路径、内网 DNS 和 Route 证书信任。客户已有 VPN、专线或运维桌面时，使用客户批准的访问方式；下面是 **RHDP Workshop** 的两种选择，不需要重新安装 Dify，也不需要开放集群公网入口。
+
+#### 方式 A：Showroom 的 Jump 桌面（首选）
+
+在本次环境的 Demo Portal 打开 **Lab Guide / Showroom → Desktop**（SSH Terminal 旁边），然后在 **Jump 桌面中的 Firefox** 打开第 5 步报告中的 Console 地址。本次集群为：
+
+[https://dify-console.apps.disco.lab/apps](https://dify-console.apps.disco.lab/apps)
+
+这是 [Workshop Guide 第 5 章的浏览器访问方式](https://showroom-showroom-2c8jd.apps.cluster1.openshift.shared.redhatworkshops.io/content/modules/lab05.html#_log_in_to_the_openshift_web_console)：浏览器运行在 Jump，使用其内网 DNS 和网络路径，Guide 已配置实验集群 Web 证书信任。上述 Showroom 链接属于本次申请的环境；以后申请时必须从新环境 Portal 打开对应 Guide。此方式不需要在你本机配置代理；地址栏应保持真实 HTTPS 域名，不替换为 Jump IP 或 `localhost`。
+
+#### 方式 B：本机 Firefox 经 Jump 的 SOCKS5 隧道
+
+**运行位置：你自己的 Mac / Linux 终端，不是 Jump 或 Highside。** 需要本机已安装 OpenSSH 客户端和 Firefox。先从当前 Portal 的 **Jump Instance → SSH** 获取 Jump 公网 IP/DNS；交互输入时只填 IP 或 DNS，不填 `ssh`、用户名或密码：
+
+```bash
+printf '请输入当前 Portal 的 Jump 公网 IP 或 DNS：'
+read -r DIFY_JUMP_HOST
+ssh -N -D 127.0.0.1:1080 \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  "lab-user@$DIFY_JUMP_HOST"
+```
+
+按 SSH 提示使用当前环境凭证认证，不把密码写入命令或文件。首次连接须核对主机指纹；环境重建引起指纹变化时先核对目标，不关闭主机密钥检查。登录后前台没有 shell 提示符是正常现象，**保持这个终端打开**。本机 `127.0.0.1:1080` 只接收本机 SOCKS 请求，由 Jump 解析目标域名并连接内网服务。OpenSSH `-D` 的行为见 [官方手册](https://man.openbsd.org/ssh)。
+
+建议先通过 Firefox 的 `about:profiles` 新建并启动一个专用实验配置文件，再进入 **设置 → 常规 → 网络设置 → 设置 → 手动配置代理**，填写：
+
+| 项目 | 填写值 |
+|---|---|
+| HTTP 代理 / HTTPS 代理 | 留空 |
+| SOCKS 主机 | `127.0.0.1` |
+| 端口 | `1080` |
+| SOCKS 版本 | **SOCKS v5** |
+| 使用 SOCKS v5 时代理 DNS / Proxy DNS when using SOCKS v5 | **勾选** |
+| 不使用代理的地址 / No proxy for | 本专用配置可保留 `localhost, 127.0.0.1`；不要加入 `.lab`、`disco.lab` 或 Console 域名 |
+
+代理设置见 [Firefox 官方说明](https://support.mozilla.org/en-US/kb/connection-settings-firefox)，SOCKS 版本与代理 DNS 的含义见 [Mozilla Proxy 配置说明](https://firefox-admin-docs.mozilla.org/reference/policies/proxy/)。必须让内网 DNS 经 SOCKS 代理解析，不能依赖本机公网 DNS。此设置只作用于该 Firefox 配置文件，不会自动让其他浏览器或 Codex 内置浏览器经过代理。保存后使用该 Firefox 打开上面的 Console 地址。
+
+#### Route 私有 CA：出现证书不可信时
+
+SSH 隧道不改变 HTTPS 证书验证。本次 RHDP 使用集群 router CA；本机若尚未信任它，先取回**公开 CA 证书**并核对指纹。客户自签 Route 应使用客户管理员提供的 CA，而不是照搬 RHDP 的证书位置。这里的 Route CA 与 Podman Registry 的 CA 不同。
+
+**先在 Jump 的 `lab-user` shell 执行**，只导出 `router-ca` Secret 的公开 `tls.crt` 字段，不导出私钥、kubeconfig 或认证文件。以下 oc 路径使用本次 `native-002`；其他介质目录应换成现场实际位置：
+
+```bash
+install -d -m 0700 "$HOME/dify-browser-access"
+(set -o pipefail
+  ssh highside "sudo -n /mnt/high-side-data/dify-customer-media-native-002/bundle/bin/oc --kubeconfig /mnt/high-side-data/rhdp-bootstrap/cluster/auth/kubeconfig -n openshift-ingress-operator get secret router-ca -o 'jsonpath={.data.tls\.crt}'" |
+    base64 -d > "$HOME/dify-browser-access/route-ca.crt"
+)
+openssl x509 -in "$HOME/dify-browser-access/route-ca.crt" -noout -fingerprint -sha256
+```
+
+任一步失败先停止。记录上述 SHA256 指纹；不要把服务器叶子证书或来源不明的 CA 当作根证书导入。
+
+**在本机另开一个终端**（隧道终端继续保持运行），重新输入 Jump 地址，然后下载公开 CA 并核对指纹：
+
+```bash
+printf '请输入当前 Portal 的 Jump 公网 IP 或 DNS：'
+read -r DIFY_JUMP_HOST
+install -d -m 0700 "$HOME/dify-browser-access"
+scp "lab-user@${DIFY_JUMP_HOST}:dify-browser-access/route-ca.crt" \
+  "$HOME/dify-browser-access/route-ca.crt"
+openssl x509 -in "$HOME/dify-browser-access/route-ca.crt" -noout -fingerprint -sha256
+```
+
+两侧指纹一致后，在专用 Firefox 配置文件的 **设置 → 隐私与安全 → 证书 → 查看证书 → 证书颁发机构 → 导入** 中选择该文件，按实验用途确认信任其标识网站，再刷新 Console 页面。客户遵从自己的证书信任流程。无需关闭 TLS 验证或修改系统全局证书库。
+
+#### 验证代理路径与结束使用
+
+可以先在本机第二个终端验证 SOCKS、代理 DNS 和 TLS。以下使用上一步已核对的 Route CA；`socks5h` 表示把域名交给代理解析，`--noproxy ''` 防止本机已有 `NO_PROXY` 让本次测试绕过隧道，见 [curl 官方说明](https://curl.se/docs/manpage.html#--socks5-hostname)：
+
+```bash
+curl --noproxy '' --proxy socks5h://127.0.0.1:1080 \
+  --cacert "$HOME/dify-browser-access/route-ca.crt" \
+  --connect-timeout 10 --max-time 30 \
+  -sS -o /dev/null -w 'HTTP %{http_code}\n' \
+  https://dify-console.apps.disco.lab/apps
+```
+
+成功标志为 `HTTP 200`，并且专用 Firefox 能显示 Dify 页面（登录、初始化或授权页面均需按现场状态继续处理）；页面可达不代表 License 或业务验收完成。本次环境已实际验证 Jump 直连及本机 SOCKS5/代理 DNS/CA 校验访问，均返回 200；Firefox 页面交互和登录仍需使用者验证。
+
+| 现象 | 检查位置 |
+|---|---|
+| SSH 提示端口已占用 | 将隧道、Firefox 和 curl 的端口一起改为未占用端口，例如 `1081` |
+| 域名无法解析 | Firefox 是否勾选代理 DNS；是否有绕过 `.lab` 的规则；curl 是否使用 `socks5h` |
+| 代理拒绝连接或超时 | 本机隧道终端是否仍在运行；Portal 环境和集群是否启动；是否在本机而不是 Jump 建立监听 |
+| 证书不可信或名称不符 | 核对当前环境的 Route CA、指纹和地址栏域名；不使用 `-k` 或关闭证书验证 |
+| curl 成功但浏览器失败 | 是否在同一个专用 Firefox 配置中设置代理并信任 CA；查看具体证书或页面错误 |
+
+结束时先退出专用 Firefox 配置（或恢复该配置原代理设置），再在隧道终端按 `Ctrl+C`。若环境销毁后不再需要该 CA，可在专用配置中移除其信任。操作不更改集群安装、Podman 服务或业务数据；已制好的介质无需更新。旧介质内文档不会自动变化，本节更新以在线指南为准，新制介质会随 Quick Start 一同携带本节。
+
 ## 6. 清理后重新验证安装
 
 使用新增的 `customer-reset.yml`，操作步骤见 [清理与重装指南](disconnected-reset.md)。默认只读取现场计划，执行需指定模式、启用执行并提供预览确认 hash：
