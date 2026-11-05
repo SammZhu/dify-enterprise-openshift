@@ -1,5 +1,7 @@
 # 离线安装的高级配置
 
+面向 Dify 同事编写客户手工离线安装手册的架构、步骤对照、交付物和验证关卡见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（随完整源码提供，不是客户包内的现成手工安装入口）。
+
 客户默认使用 [Quick Start](customer-quickstart.md)；本页是同一套原生 Ansible Role 的扩展参数，不是第二套脚本操作。入口、准备和安装步骤不变，详见 [实现原理](native-ansible.md)。
 
 ## 默认与扩展的边界
