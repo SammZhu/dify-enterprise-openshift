@@ -531,15 +531,15 @@ ssh -N -D 127.0.0.1:1080 \
 ```bash
 install -d -m 0700 "$HOME/dify-browser-access"
 open -na "Google Chrome" --args \
-  --user-data-dir="$HOME/dify-browser-access/chrome-profile" \
+  --user-data-dir="$HOME/dify-browser-access/chrome-socks-test" \
   --proxy-server="socks5://127.0.0.1:1080" \
-  --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE localhost" \
+  --no-first-run \
   "https://dify-console.apps.disco.lab/apps"
 ```
 
-`--user-data-dir` 将本次实验的代理参数、Cookie 和登录状态与日常 Chrome 分开；不使用日常 Chrome 的用户数据目录，也不需要登录 Google 账号。`open -na` 请求新实例，已有日常 Chrome 可继续使用。**Chrome 参数使用 `socks5://`，不是 curl 的 `socks5h://`**；SOCKS5 的目标域名由代理解析，resolver 规则用于限制其他本机 DNS 查询，依据 [Chromium SOCKS 说明](https://www.chromium.org/developers/design-documents/network-stack/socks-proxy/)。本配置无需修改 macOS 系统代理。
+`--user-data-dir` 将本次实验的代理参数、Cookie 和登录状态与日常 Chrome 分开；不使用日常 Chrome 的用户数据目录，也不需要登录 Google 账号。`open -na` 请求新实例，已有日常 Chrome 可继续使用。**Chrome 参数使用 `socks5://`，不是 curl 的 `socks5h://`**；SOCKS5 的 HTTP/HTTPS 目标域名由代理解析，依据 [Chromium SOCKS 说明](https://www.chromium.org/developers/design-documents/network-stack/socks-proxy/)。`--no-first-run` 跳过首次运行引导。本次主命令使用已验证的简化参数，不追加 host resolver 规则。本配置无需修改 macOS 系统代理。
 
-在新开的实验 Chrome 打开 `chrome://version`，检查 **Profile Path / 个人资料路径** 位于 `dify-browser-access/chrome-profile` 下，**Command Line / 命令行**包含上述代理参数，然后在该窗口访问 Console。若改变端口或启动参数，先关闭使用这一专用目录的全部 Chrome 实例，再用新参数启动；不要只在已有窗口中开新标签页。此命令只覆盖 macOS，其他 OS 不照搬 `open` 命令。
+在新开的实验 Chrome 打开 `chrome://version`，检查 **Profile Path / 个人资料路径** 位于 `dify-browser-access/chrome-socks-test` 下，**Command Line / 命令行**包含上述代理参数，然后在该窗口访问 Console。若改变端口或启动参数，先关闭使用这一专用目录的全部 Chrome 实例，再用新参数启动；不要只在已有窗口中开新标签页。此命令只覆盖 macOS，其他 OS 不照搬 `open` 命令。
 
 #### Route 私有 CA：出现证书不可信时
 
@@ -588,7 +588,7 @@ curl --noproxy '' --proxy socks5h://127.0.0.1:1080 \
   https://dify-console.apps.disco.lab/apps
 ```
 
-成功标志为 `HTTP 200`，并且专用 Firefox 或实验 Chrome 能显示 Dify 页面（登录、初始化或授权页面均需按现场状态继续处理）；页面可达不代表 License 或业务验收完成。本次环境已实际验证 Jump 直连及本机 SOCKS5/代理 DNS/CA 校验访问，均返回 200；Firefox/Chrome 页面交互和登录仍需使用者验证；Chrome 命令已核对官方说明与本机应用位置，未自动启动用户浏览器或更改钥匙串。
+成功标志为 `HTTP 200`，并且专用 Firefox 或实验 Chrome 能显示 Dify 页面（登录、初始化或授权页面均需按现场状态继续处理）；页面可达不代表 License 或业务验收完成。本次环境已实际验证 Jump 直连及本机 SOCKS5/代理 DNS/CA 校验访问，均返回 200；2026-11-05 用户已按上述简化命令自行启动 macOS Chrome 并确认 Console 页面加载成功。实际登录、License 激活及业务操作仍未验收。
 
 | 现象 | 检查位置 |
 |---|---|
@@ -596,6 +596,7 @@ curl --noproxy '' --proxy socks5h://127.0.0.1:1080 \
 | 域名无法解析 | Firefox 是否勾选代理 DNS，Chrome 的专用窗口是否包含 SOCKS 参数；是否有绕过 `.lab` 的规则；curl 是否使用 `socks5h` |
 | 代理拒绝连接或超时 | 本机隧道终端是否仍在运行；Portal 环境和集群是否启动；是否在本机而不是 Jump 建立监听 |
 | 证书不可信或名称不符 | 核对当前环境的 Route CA、指纹和地址栏域名；不使用 `-k` 或关闭证书验证 |
+| `ERR_INTERNET_DISCONNECTED`，但同一 SOCKS 路径 curl 返回 200 | 使用上面的简化 Chrome 命令及新的 `chrome-socks-test` 目录，不沿用旧 `chrome-profile` 窗口或附加 `--host-resolver-rules`；若该新目录也已有进程，先关闭对应实验实例再重开。现场此组合已恢复页面加载；同时更换了参数和配置目录，未单独证明某一个参数是唯一根因 |
 | curl 成功但浏览器失败 | Firefox 是否使用配置了代理/CA 的专用配置；Chrome 是否使用实验目录及当前 Route CA 信任，`chrome://version` 参数是否正确 |
 
 结束时先退出专用 Firefox 配置（或恢复该配置原代理设置）/关闭实验 Chrome，再在隧道终端按 `Ctrl+C`。若环境销毁后不再需要该 CA，Firefox 在专用配置中移除其信任；macOS Chrome 在 login 钥匙串按已记录的指纹定位，只删除本次导入的实验 CA 或恢复其先前信任设置。日常 Chrome 的代理设置未改动；再次测试时重新运行隧道和实验 Chrome 启动命令。操作不更改集群安装、Podman 服务或业务数据；已制好的介质无需更新。旧介质内文档不会自动变化，本节更新以在线指南为准，新制介质会随 Quick Start 一同携带本节。
