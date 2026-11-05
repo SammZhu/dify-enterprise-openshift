@@ -228,6 +228,24 @@ RHDP 的 Highside DNS 在 **Highside 上**执行 `hostname -f` 取得，填写�
 
 源认证文件、参数文件、工作目录都放在源码目录之外。可选参数见 `customer-prepare.example.yml`；`customer_plugins_dir` 接收审核后的 `.difypkg`，`customer_wheels_dir` 接收这些插件所需的完整 wheel 集合。**控制端 wheelhouse 不等于插件依赖闭包**；未提供插件和模型时只验收平台部署。
 
+### 1.5 确认离线主机 OS 前置软件
+
+这是第 0 步要求的实际检查点；先完成第 1.3 节，保证控制端已有 Ansible。目标主机缺少 Python 3.12、Podman 等软件时，按 [主机前置准备](host-prerequisites.md) 安装；已有全部软件则跳过。
+
+**RHDP：在 Jump 的 `lab-user` shell 执行**，通过 `highside` SSH 别名安装 Highside 所需 RPM：
+
+```bash
+cd "$DIFY_SOURCE_DIR/ansible"
+"$DIFY_WORK_ROOT/dify-ansible/bin/ansible-playbook" \
+  -i inventory.example.yml host-prerequisites.yml \
+  -e prerequisite_target=highside \
+  -e prerequisite_mode=repositories
+```
+
+成功标志为 `failed=0`，输出包含 Python 3.12 和对应 pip 版本。该模式使用 Highside 已配置的 RHUI/OS 源；它是操作系统准备，不属于应用介质的断网安装。完全离线客户应使用已准备好的内网 OS 源或指南中的 `local_rpms` 模式。
+
+**若已完成第 2 步制包和搬运，现在才发现 Highside 缺软件，补做本节即可，成功后继续第 3 步；无需重新制包。**
+
 ## 2. 联网制作机：一条 Playbook 制作介质
 
 ```bash
@@ -271,7 +289,18 @@ cat /mnt/low-side-data/dify-customer-media-native-001/bundle/images.lock.yaml
 /mnt/low-side-data/dify-customer-media-native-001/dify-offline-3.9.8-linux-amd64.tar.gz.sha256
 ```
 
-离线机从第 3 步起使用 root。由离线机管理员先执行 `sudo -i`，再执行 `install -d -m 0755 /opt/dify-media`，然后将上述两个文件放入该目录。`/opt/dify-media` 是离线机管理员创建的接收目录，和 Jump 的源码路径没有关系。
+客户将这两个文件搬入离线机管理员创建的接收目录。客户默认由管理员先在离线机执行 `sudo -i`，再执行 `install -d -m 0755 /opt/dify-media`，然后搬入文件；接收目录与 Jump 源码路径无关。离线机从第 3 步起使用 root。
+
+**RHDP 搬运示例：在 Jump 的 `lab-user` shell 执行。** 下例使用第 2.3 节重试成功的 `native-002`；首次成功介质若为 `native-001`，两条路径都应改为实际编号。已经搬运完成则跳过，不必复制到 `/opt`：
+
+```bash
+ssh highside 'install -d -m 0700 /mnt/high-side-data/dify-customer-media-native-002'
+scp /mnt/low-side-data/dify-customer-media-native-002/dify-offline-3.9.8-linux-amd64.tar.gz \
+  /mnt/low-side-data/dify-customer-media-native-002/dify-offline-3.9.8-linux-amd64.tar.gz.sha256 \
+  highside:/mnt/high-side-data/dify-customer-media-native-002/
+```
+
+两个文件均成功传输后继续第 3 步。
 
 包内包含 Chart、OCI 镜像与锁文件、oc/Helm、客户 Ansible 入口、控制端 wheels、wheel 索引及文档。源 registry 认证、客户 kubeconfig、目标服务私钥和 Enterprise License 不会自动加入介质。校验文件须通过可信渠道一并交付。
 
@@ -291,29 +320,67 @@ customer_media_root: /mnt/low-side-data/dify-customer-media-native-002
 
 ## 3. 离线 Podman 主机：校验并安装 Ansible 运行环境
 
-**从这里开始在离线 Podman 主机执行，不访问公网，使用上一步已打开的 root shell。** 确认第 0 步的 OS 软件已经装好，先验 checksum，再解包：
+### 3.1 登录离线主机并选择路径
+
+客户管理员在离线 Podman 主机执行 `sudo -i`。**RHDP 则从 Jump 执行下面一行，进入 Highside 的 root shell**：
 
 ```bash
-cd /opt/dify-media
+ssh -t highside 'sudo -i'
+```
+
+**以下两组路径选一组。** 客户通用默认路径（介质已按第 2.2 节放好）：
+
+```bash
+export DIFY_MEDIA_DIR=/opt/dify-media
+export DIFY_CONTROLLER_DIR=/opt/dify-ansible
+export DIFY_PRIVATE_DIR=/root/dify-private
+export DIFY_STATE_ROOT=/var/lib/dify-offline
+```
+
+**RHDP Highside 使用这一组**（以下为已成功搬运的 `native-002`）：
+
+```bash
+export DIFY_MEDIA_DIR=/mnt/high-side-data/dify-customer-media-native-002
+export DIFY_CONTROLLER_DIR=/mnt/high-side-data/dify-ansible
+export DIFY_PRIVATE_DIR=/mnt/high-side-data/dify-private
+export DIFY_STATE_ROOT=/mnt/high-side-data/dify-bootstrap
+```
+
+`DIFY_MEDIA_DIR` 指向本次成功介质所在目录，不能指向已失败或已删除的 `native-001`。`DIFY_STATE_ROOT` 保存服务、证书、凭证及安装状态，和介质目录用途不同。RHDP 清理后重装沿用原 `/mnt/high-side-data/dify-bootstrap`，保留的证书和认证由安装器校验后复用；已有安装须先完成第 6 步清理，不能用切换状态目录的方式绕过归属检查。
+
+第 3～5 步在同一个 Highside/离线机 root shell 中执行；重新登录或 `sudo -i` 后先重新执行所选的四条 `export`。这些变量只用于终端命令，不要把变量名写入 YAML。
+
+### 3.2 校验介质并离线安装控制端
+
+确认第 1.5 节 OS 软件已就绪。以下命令不访问公网；**任一命令失败即停止，不继续后面的命令**：
+
+```bash
+cd "$DIFY_MEDIA_DIR"
 sha256sum -c dify-offline-3.9.8-linux-amd64.tar.gz.sha256
 tar -xzf dify-offline-3.9.8-linux-amd64.tar.gz
-python3.12 -m venv /opt/dify-ansible
-/opt/dify-ansible/bin/python -m pip install --no-index \
-  --find-links /opt/dify-media/bundle/controller-wheels \
-  -r /opt/dify-media/bundle/ansible/requirements.txt
+python3.12 -m venv "$DIFY_CONTROLLER_DIR"
+"$DIFY_CONTROLLER_DIR/bin/python" -m pip install --no-index \
+  --find-links "$DIFY_MEDIA_DIR/bundle/controller-wheels" \
+  -r "$DIFY_MEDIA_DIR/bundle/ansible/requirements.txt"
+"$DIFY_CONTROLLER_DIR/bin/ansible-playbook" --version
 ```
+
+成功标志：SHA256 输出 `OK`；依赖安装成功，最后显示 `ansible-playbook [core 2.20.10]`。
+
+本次只是文档路径说明更新，已成功封存并搬运的介质可继续使用，不需要为更新说明而重新制包。旧包内的说明不会自动更新；继续本次验证时以本页第 3～5 步为准，使用包内原有安装入口，不向已封存 bundle 复制新版文档。以后重新制包会自动携带更新后的指南。
 
 这些 Python 命令仅建立 Ansible 运行环境。不要修改解压后的 `bundle`：安装会再次校验完整文件清单及 SHA256。
 
 ## 4. 离线 Podman 主机：填写安装参数并运行
 
 ```bash
-install -d -m 0700 /root/dify-private
-cp /opt/dify-media/bundle/ansible/customer-install.example.yml /root/dify-private/install.yml
-chmod 0600 /root/dify-private/install.yml
+install -d -m 0700 "$DIFY_PRIVATE_DIR"
+cp -n "$DIFY_MEDIA_DIR/bundle/ansible/customer-install.example.yml" "$DIFY_PRIVATE_DIR/install.yml"
+chmod 0600 "$DIFY_PRIVATE_DIR/install.yml"
+vi "$DIFY_PRIVATE_DIR/install.yml"
 ```
 
-由客户管理员把目标集群 kubeconfig 保存到 `/root/dify-private/kubeconfig`（0600）。编辑 `/root/dify-private/install.yml`：
+`cp -n` 保留已有私有参数文件；重装时仍须核对下面四项。客户默认路径由客户管理员把目标集群 kubeconfig 保存到 `/root/dify-private/kubeconfig`（0600）。编辑 `/root/dify-private/install.yml`：
 
 ```yaml
 customer_bundle_dir: /opt/dify-media/bundle
@@ -322,28 +389,45 @@ customer_kubeconfig: /root/dify-private/kubeconfig
 customer_context: customer-admin  # 换成 kubeconfig 中客户确认的实际 context
 ```
 
+**RHDP：在上面打开的 `install.yml` 中填写以下四项绝对路径/值**，使用现有集群管理员 kubeconfig，无需复制或在聊天中粘贴其内容：
+
+```yaml
+customer_bundle_dir: /mnt/high-side-data/dify-customer-media-native-002/bundle
+customer_state_root: /mnt/high-side-data/dify-bootstrap
+customer_kubeconfig: /mnt/high-side-data/rhdp-bootstrap/cluster/auth/kubeconfig
+customer_context: admin
+```
+
+本例 `admin` 须与第 0 步查到的实际 context 一致。若介质编号或状态目录不同，填写现场实际值；`customer_bundle_dir` 和 `customer_state_root` 须分别对应第 3.1 节的介质和状态目录。保存并退出编辑器后执行本节安装命令。
+
 如使用客户签发的 TLS 证书，同时提供 `customer_tls_cert`、`customer_tls_key` 和 `customer_tls_ca`，证书 SAN 必须覆盖 Podman 主机 DNS。未指定时生成并持久保存私有 CA；安装把 CA 合并到 OpenShift 镜像信任配置，不覆盖已有 CA。证书轮换需单独安排，重跑不会自动更换旧密钥。
 
 HTTPS Route 验收使用主机系统根证书及可用的集群 router CA；如果客户 Route 使用另外的私有 CA，在同一 `install.yml` 填写 `customer_route_ca: /root/dify-private/route-ca.crt`。它是 OpenShift Route 的信任证书，与 Podman 服务的 `customer_tls_ca` 分开配置。
 
 ```bash
-cd /opt/dify-media/bundle/ansible
-/opt/dify-ansible/bin/ansible-playbook -i localhost, customer-install.yml \
-  -e @/root/dify-private/install.yml
+cd "$DIFY_MEDIA_DIR/bundle/ansible"
+"$DIFY_CONTROLLER_DIR/bin/ansible-playbook" -i localhost, customer-install.yml \
+  -e "@$DIFY_PRIVATE_DIR/install.yml"
 ```
 
 流程为 `preflight → verify → services → import → install → check`：绑定明确的集群身份，启动三个 TLS 服务，安装专用 systemd 开机单元，离线导入并固定镜像 digest，部署权限/数据层/Dify，最后进行在线状态验收。首次安装可能等待节点 CA 信任配置生效和 Pod 启动。主机上的服务使用 **rootful Podman**，查看时使用 `sudo podman ps`。
 
 ## 5. 查看结果与重跑验收
 
-成功结果：`/var/lib/dify-offline/deployment-ready.json`。其中 `routes` 列出实际 HTTPS 地址和状态，`localS3Roundtrip` 表示认证 TLS S3 读写删除测试通过。浏览器使用实际 Dify Route 访问；私有签发的 Route 证书须按客户规范信任。
+成功标志：第 4 步 Play Recap 为 `failed=0`，并生成与本次安装对应的 `$DIFY_STATE_ROOT/deployment-ready.json`。客户默认位置为 `/var/lib/dify-offline/deployment-ready.json`，RHDP 为 `/mnt/high-side-data/dify-bootstrap/deployment-ready.json`。在同一 root shell 只读查看：
+
+```bash
+cat "$DIFY_STATE_ROOT/deployment-ready.json"
+```
+
+其中 `routes` 列出实际 HTTPS 地址和状态，`localS3Roundtrip` 表示认证 TLS S3 读写删除测试通过。浏览器使用实际 Dify Route 访问；私有签发的 Route 证书须按客户规范信任。
 
 只重新验收：
 
 ```bash
-cd /opt/dify-media/bundle/ansible
-/opt/dify-ansible/bin/ansible-playbook -i localhost, customer-install.yml \
-  -e @/root/dify-private/install.yml \
+cd "$DIFY_MEDIA_DIR/bundle/ansible"
+"$DIFY_CONTROLLER_DIR/bin/ansible-playbook" -i localhost, customer-install.yml \
+  -e "@$DIFY_PRIVATE_DIR/install.yml" \
   -e '{"customer_install_stages":["preflight","verify","check"]}'
 ```
 
