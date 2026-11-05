@@ -37,4 +37,6 @@ cd /mnt/low-side-data/dify-enterprise-openshift/ansible
 
 同一介质、状态目录及集群可以重跑；服务复用已有归属匹配的数据和凭证，不自动清空 PVC。只验收时选择 `[preflight, verify, check]`；重启后恢复服务并验收选择 `[preflight, verify, services, check]`。
 
+浏览器从内网之外访问时，还需运维网络路径、内网 DNS 和 Route CA 信任；RHDP 的 Showroom 桌面及本机 SOCKS5 配置见 [Quick Start 第 5.2 节](customer-quickstart.md#52-从浏览器访问离线-dify-console)。
+
 安装验证 Pod Ready、内部 digest 镜像、四个数据库、Redis、认证 TLS S3 和 HTTPS 入口。License、业务上传、插件、模型和 RAG 必须另行验收，见 [验收清单](disconnected-validation.md)。客户原生入口已在 RHDP 4.20.8 完成部署及 PostgreSQL 验收修复后的定向复验，详见 [2026-11-05 现场记录](rhdp-dify-offline.md#2026-11-05客户原生入口现场验证)。这不代表修复版新介质的一次完整安装、RHDP 适配入口、原生清理或重启恢复已验证；旧实现的记录也不能代替这些项目。
