@@ -1,6 +1,6 @@
 # 使用原生 Ansible 离线部署 Dify
 
-面向 Dify 同事编写客户手工离线安装手册的架构、步骤对照、交付物和验证关卡见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（随完整源码提供，不是客户包内的现成手工安装入口）。
+面向 Dify 同事编写客户手工离线安装手册的架构及分步手工操作命令见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（操作稿与jq过滤文件随完整源码提供，使用已校验的离线bundle）。
 
 **客户安装是主线，从 [客户 Quick Start](customer-quickstart.md) 开始。** 联网端执行 `customer-prepare.yml`，离线 Podman 主机执行 `customer-install.yml`，清理与重装执行 `customer-reset.yml`。具体机制见 [原生任务与保护逻辑](native-ansible.md)。
 

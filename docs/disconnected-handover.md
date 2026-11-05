@@ -1,444 +1,650 @@
-# Dify Enterprise 离线安装技术移交：客户手工手册编写与验证
+# Dify Enterprise 离线手工安装操作稿
 
-本文交给 Dify 的交付、文档、研发和测试同事，用于理解本工程的离线方案，编写客户手工安装手册，并逐项验证。实现核对基线为 [47794b185146](https://github.com/SammZhu/dify-enterprise-openshift/tree/47794b1851461e2b2f4da875128592c3ff038982)，核对日期 2026-11-05；产品/Chart 升级后应重新审查。基线为本仓库当前原生 Ansible 客户实现；不是在线 GitOps 安装的步骤替换，也不要求客户部署 Git、ArgoCD 或预先拥有镜像仓库。
+本文供 Dify 同事按步骤手工重现安装，整理面向客户的手册。说明以当前客户 Ansible 实现为依据，操作命令在离线端直接使用 Podman、oc、Helm、jq/yq，不调用安装 Playbook。自动化主入口仍保持 Ansible，本篇没有新增另一个全流程脚本安装器。
 
-**交付状态必须区分：**客户自动制包、部署和修复后的验收已在 RHDP OpenShift 4.20.8 验证；本文的纯手工顺序尚未在全新环境逐条独立执行。当前介质没有预制的“客户手工安装包”：依赖清单、带真实凭证的 values 和离线派生 Chart 都在安装时动态生成，临时文件随后清理。因此本文是技术移交和手工手册的编写/测试基线，不能直接标成“已验证的客户手工安装手册”。第 6 节明确列出手工交付前须补齐的产物；本文不假定这些文件已经存在。
+操作范围：Dify Enterprise/Chart **3.9.8**、Linux amd64、RHEL 9 系、已有 OpenShift 4.20/4.21、namespace/release **dify**、单机 TLS Registry + wheel 索引 + 本地 SeaweedFS S3。已通过现场验证的是自动安装及修复后的验收；**本篇手工顺序仍需在空白目标完整执行验证**。命令和数据转换可做本地回归，不能据此声称手工现场安装已经通过。
 
-本文随完整源码供工程移交，不加入当前客户介质文档白名单，避免被当作可直接执行的正式手工交付包；客户包仍以 Quick Start 为入口。
+本篇从**制作侧交付的可校验介质**开始；联网制作仍使用 [Quick Start 第 1～2 节](customer-quickstart.md)。这能让自动安装与手工安装使用同一批镜像、Chart及配置，手工复现离线安装不要求重新手工设计镜像清单。若将来单独编写纯手工制包手册，应另外验证其制品与此介质契约一致。
 
-自动化的主入口继续使用 Ansible。本文展示底层 CLI，是应手工手册需求解释操作，不增加第二套 Python/Shell 安装控制器。
-
-## 1. 阅读路径与在线移交的区别
-
-| 资料 | 用途与边界 |
-|---|---|
-| [客户 Quick Start](customer-quickstart.md) | 当前可执行的自动化操作主线，含路径、参数、制包、离线控制端、安装与代理访问 |
-| [原生 Ansible 原理](native-ansible.md) | 阶段编排、绑定、租约、归属与重跑保护 |
-| 本文 | 为什么需要各步骤；手工对应动作、文件契约、源码依据和手工验证关卡 |
-| [高级配置](disconnected-manual.md) | 同一 Role 的外部 S3/ODF、arm64 参数分支，**不是手工安装步骤** |
-| [验收清单](disconnected-validation.md)、[清理重装](disconnected-reset.md) | 部署与业务验收、数据删除范围和恢复责任 |
-| [RHDP 记录](rhdp-dify-offline.md) | 现场证据及未覆盖范围；不能当作所有客户场景通过 |
-| [在线环境移交](handover.md) | 历史在线 GitOps 环境、SSO、模型与观测集成；其中账号、有效期、端点和操作禁令不适用于本文离线 Helm 方案 |
-
-在线移交要求通过 Git/ArgoCD 变更；离线方案由客户入口调用本地 oc/Helm，二者不能同时管理同一个 release。离线默认不安装 GitOps、ODF、Keycloak、日志/追踪平台或本地模型，也不继承在线环境账号和授权。
-
-## 2. 架构、请求路径与责任
+## 1. 先看清安装结构
 
 ```mermaid
 flowchart LR
-  Prep[联网制作机] -->|可信渠道搬运归档与校验文件| Media[离线介质]
-  Media --> Host[客户单机 Podman 主机]
-  Host --> Registry[TLS Registry :5000]
-  Host --> Index[HTTPS wheel 索引 :9443]
-  Host --> Proxy[HTTPS S3 代理 :9444]
-  Proxy --> Seaweed[Podman 私有网络 SeaweedFS :8333]
-  Registry -->|拉取固定 digest 镜像| OCP[已有 OpenShift 集群]
-  OCP -->|插件构建镜像推送| Registry
-  OCP -->|插件 Python 依赖| Index
-  OCP -->|文件与插件包等对象| Proxy
-  OCP --> Data[PostgreSQL / Redis / Qdrant PVC]
-  Browser[客户浏览器或运维桌面] -->|HTTPS Route| OCP
+  Media[已校验离线介质] --> Host[独立 Podman 主机]
+  Host --> Registry[TLS Registry 5000]
+  Host --> Wheel[HTTPS wheel 索引 9443]
+  Host --> S3[nginx HTTPS 9444 / SeaweedFS 私网8333]
+  Registry --> OCP[已有 OpenShift]
+  OCP -->|插件镜像推送| Registry
+  OCP --> Wheel
+  OCP --> S3
+  OCP --> DB[PostgreSQL / Redis / Qdrant PVC]
+  Browser[内网浏览器或 Jump 代理] -->|HTTPS Routes| OCP
 ```
 
-本次现场 16 个应用工作负载按下面分组盘点；这些是运行架构清单，不等于每个业务功能均已验证。最终命名/副本以本次 Chart 渲染和集群资源为准。
+Registry 保存平台镜像及插件构建镜像；wheel 索引保存插件 Python 依赖，不负责模型；SeaweedFS 保存对象数据。默认不安装 Git、ArgoCD、ODF、SSO、模型或观测平台。六个 Route 使用集群 Router 证书，**不是** Podman 服务的证书。内部 PostgreSQL/Redis 未启用 TLS，Qdrant 为集群内 HTTP；生产内部加密要求应单独适配。
 
-| 组件组 | 本次工作负载后缀 | 对手工交付的意义 |
-|---|---|---|
-| Web/企业前端与入口 | web、enterprise-frontend、gateway | 六个 Route 与实际 host/path、TLS、SSE、浏览器访问 |
-| API 与后台任务 | api、worker、worker-beat、trigger-worker | 数据库、Redis、对象存储、模型/插件；Ready 不代替任务和触发器验收 |
-| 企业服务 | enterprise、enterprise-audit、enterprise-collector | 企业配置/License、审计和产品采集；不等于已部署 OpenShift 日志/追踪平台 |
-| 插件控制/运行链路 | plugin-connector、plugin-manager、plugin-daemon、crd-controller | CRD/RBAC、运行时镜像、构建/推送凭证、pip依赖与CA，不能只盘点现有Pod镜像 |
-| 执行与访问隔离 | sandbox、ssrf-proxy | 专用SCC/能力、代理策略与业务连通性；不通过提高全局权限解决问题 |
+三个 PostgreSQL/Redis/Qdrant PVC 默认是 **30/5/30 GiB**。预留镜像、容器层、Registry、S3及备份空间；建议 Podman 主机数据盘至少60 GiB并按实际使用扩容，不以压缩包大小计算运行空间。客户提供稳定内网 DNS、StorageClass、cluster-admin kubeconfig及网络通道：节点/Pod可访问主机5000/9443/9444，运维端可访问集群6443及Route443。
 
-单机 Podman 主机是离线基础服务，不是 OpenShift 节点。Registry 不使用 OpenShift 内置 Registry；插件构建镜像也写入这个外部本地 Registry。wheel 索引不负责模型下载；SeaweedFS 是默认单机实验对象存储，不提供生产 HA 承诺。离线应用使用六个 Route；Registry CA 与 Route CA 是两条独立信任链。
+**只在空白验证目标初装。** 手工操作期间不并行运行本篇或自动安装入口；本篇不创建自动安装器的独占租约。 不对正在使用的在线 GitOps或自动离线安装执行本篇；同名namespace、容器、Helm release存在时停止，不接管或删除。客户端未安装的功能、License、插件和模型不因Pod Ready就自动可用。
 
-| 发起方 → 接收方 | 默认端口/协议 | 必须验证 |
-|---|---|---|
-| 制作机 → 源 Chart、镜像、工具、依赖源 | 通常 HTTPS 443 | 联网侧授权、可信来源及制品摘要 |
-| 离线运维端 → OpenShift API | HTTPS 6443 | kubeconfig/context 明确，API 可达且证书有效 |
-| 节点及 Pod → Podman 主机 | HTTPS 5000 | DNS、网络、Registry CA、拉取认证 |
-| 插件构建 Pod → Podman 主机 | HTTPS 9443 | wheel 索引、构建镜像内 CA、匹配 ABI 的依赖 |
-| Dify Pod → Podman 主机 | HTTPS 9444 | S3 认证、bucket、CA、读写删除 |
-| nginx → SeaweedFS | 私有网络 HTTP 8333 | 仅 Podman 服务网；不发布 8333/Admin 端口 |
-| 浏览器 → OpenShift Router | HTTPS 443 | 内网域名、路由、Route CA；RHDP 可经 Jump SOCKS5 |
-| 集群内应用 → 数据层 | PostgreSQL 5432、Redis 6379、Qdrant 6333 | Service DNS、Secret、PVC 与 NetworkPolicy |
+## 2. 准备文件、工具和操作终端
 
-默认数据库和 Redis 的连接不启用 TLS，Qdrant endpoint 是集群内 HTTP。TLS Registry/S3 并不等于全链路加密；客户如有内部传输加密要求，须作为额外适配和验收项。
+### 2.1 制作侧交付什么
 
-客户负责已有且健康的集群、DNS/防火墙、StorageClass、软件包来源、cluster-admin 授权、备份和源镜像/License 合法授权。Dify 团队负责产品参数、License、插件/模型依赖闭包及业务验证。本文不提供创建 OpenShift 或修改客户边界网络的隐含步骤。手工客户验证还应检查防火墙/DNS/代理日志中的非预期公网访问；关闭 Marketplace 与镜像全内网并不证明所有产品页面或业务功能都没有外部依赖。
+由联网制作机管理员交付：
 
-## 3. 版本、容量与权限基线
+1. `dify-offline-3.9.8-linux-amd64.tar.gz`及同名`.sha256`，来源为已成功完成的`customer-prepare.yml`。
+2. **同一已审核版本的完整工程源码压缩包及其SHA256**。本篇使用其中`docs/manual-offline/map-images.jq`、`resolve-values.jq`、`s3-probe.sh`；它们随源码提供，不假定已存在于旧bundle里。
+3. OS离线软件及完整依赖：Podman、openssl、httpd-tools、tar、coreutils、jq **1.6或以上**，另提供 **Mike Farah yq v4.44.3** 的Linux amd64可执行文件。这里的yq不是Python同名包。oc/Helm使用bundle内的版本；纯手工操作不要求Ansible/Python。
 
-| 项目 | 当前默认/证据 |
-|---|---|
-| Dify Enterprise / vendor Chart | 3.9.8 / `dify-enterprise` 3.9.8；本地文件 `dify-enterprise.tgz` |
-| OpenShift | 参数支持 4.20.x、4.21.x；本次现场只验证 4.20.8 / amd64 |
-| 主机 | RHEL 9 系、默认 Linux amd64；前置 Playbook 要求 RHEL 9.4+ 兼容系统 |
-| 工具 | Helm 3.16.4；oc 按客户补丁版本下载；Podman 使用主机 RPM |
-| 自动化控制端 | Python 3.12、ansible-core 2.20.10，完整固定依赖见包内 requirements.txt |
-| 手工 CLI 端 | Podman、OpenSSL、httpd-tools、tar、oc、Helm；不运行 Ansible时不因本方案强制要求 Python。额外 JSON/YAML 工具如使用，须单独纳入 OS 离线介质 |
-| 命名空间 / release / SA | `dify` / `dify` / `dify`，不是已验证的任意名称模板 |
-| PVC | PostgreSQL 30 GiB、Redis 5 GiB、Qdrant 30 GiB；现场 gp3-csi，仅作为存储实现示例 |
-| 磁盘 | 制作前至少 30 GiB 可用，建议 60 GiB；离线主机建议至少 60 GiB并按镜像/对象数据增长扩容，不把 7.3 GiB 压缩包大小当作运行容量 |
-| 单节点实验 | 8 vCPU / 32 GiB 是演练参考，不是生产 sizing 或性能承诺 |
+工具在联网侧从客户可信软件源获取；yq来源为[官方固定版本发布页](https://github.com/mikefarah/yq/releases/tag/v4.44.3)，先核对发布方校验材料，再为实际交付的二进制生成SHA256随可信渠道搬运。不要让离线端运行curl、包管理器联网下载、Helm repo update或podman pull。
 
-OS 软件须预先由客户安装介质/内网仓库提供，Dify 介质不包含 RPM。RHDP 的 RHUI 软件源例外不等于物理断网下安装 OS 依赖已验证。arm64、外部对象存储、HA 和全新客户环境仍需独立验证。
+源镜像认证、客户kubeconfig、服务私钥和License不进入公共介质。`controller-wheels`只用于Ansible控制端，不是插件依赖闭包。此处的“源码”用于获取公开过滤文件，不要求客户安装Git。
 
-安装包含集群级写入：CRD、SCC/相应使用授权、`openshift-config` CA ConfigMap 和 `image.config.openshift.io/cluster`。不能写成“只要 namespace admin 即可安装”。运行时服务账号也不能因此获得 cluster-admin。
+### 2.2 离线端设置路径
 
-## 4. 参数来源与合并逻辑
-
-制作侧参数在私有 `prepare.yml`；安装侧参数在私有 `install.yml`，均在源码和 Git 目录之外。客户路径使用自己有写权限的目录；不能把 RHDP 的 `/mnt/low-side-data`、`disco.lab` 或 AWS 存储类写成客户前提。
-
-| 参数 | 填写方/来源 | 改动影响 |
-|---|---|---|
-| `customer_media_root` | 制作用户选定的新持久化目录 | 包的输出位置，失败后选新目录，不修补旧 bundle |
-| `customer_source_authfile` | 镜像授权提供方交付的认证 JSON，或交互登录产生 | 仅联网拉取；`auths` 域名不是镜像清单，不随介质交付 |
-| `customer_ocp_version` | `oc get clusterversion version` 的实际 desired.version | 匹配 oc 下载；4.20/4.21 支持范围仍按现场证据区分 |
-| `customer_apps_domain` | `oc get ingress.config.openshift.io cluster` 的 spec.domain | 六个应用域名，属于制包配置 |
-| `customer_registry_host` | 内网 DNS 管理员确认的 Podman 主机稳定 FQDN | 证书 SAN、节点/Pod 路径、Registry/wheel/S3 endpoint |
-| `customer_storage_class` | 客户确认可用的 StorageClass | 三个数据层 PVC；不能自动假定 gp3-csi |
-| `customer_bundle_dir` | 离线机本次已校验的 `bundle` 绝对路径 | 只读输入，不写客户凭证或更新代码进去 |
-| `customer_state_root` | 离线机管理员选定的专用私有目录 | 证书、认证、数据、绑定、报告；不是包所在目录 |
-| `customer_kubeconfig` / `customer_context` | 客户集群管理员提供并确认 | 明确目标集群；不是 prepare 参数 |
-| `customer_tls_cert/key/ca` | 客户 PKI；三者一起提供，或全部留空 | Podman 三服务的 TLS；重跑不会隐式轮换 |
-| `customer_route_ca` | 客户 Route PKI | 只用于 HTTPS Route 验收，不替代 Registry CA |
-
-最终 `bundle/config.yaml` 合并顺序是：`examples/helm/values.yaml` → `values-disconnected.yaml` → 客户拓扑覆盖 → 可选 `customer_values_overlay`，后者优先。vendor 细项再通过 `offline.chartValues` 覆盖。
-
-**不能只合并两份公共 values 就声称得到默认离线配置。** 公共 disconnected overlay 的 `objectStorage.enabled=true`、`localS3.enabled=false`、wheel 端口 8443 是扩展默认；客户 Role 随后将 objectStorage/minio 关闭、localS3 打开、wheel 端口设为 9443，并替换真实主机和存储类。手工交付必须以最终 `config.yaml` 为准。
-
-## 5. 介质和私有状态的文件契约
-
-```text
-bundle/                         # 已封存输入
-  config.yaml                   # 最终非明文凭证配置
-  checksums.json                # 完整文件集合及 SHA256（不含自身）
-  images.lock.yaml              # OCI 镜像身份、来源、归档和服务 roles
-  plugins.lock.yaml             # 审核后的插件包身份
-  dify-enterprise.tgz            # 原 vendor Chart
-  customer-media.json           # 目标/控制端版本与平台记录
-  images/000.tar ...            # 每个引用一个单平台 OCI archive
-  bin/oc, bin/helm
-  source/examples/helm/components/
-  pypi/simple/                  # 插件依赖的静态 simple 索引，可合法为空
-  plugins/                      # 可选 .difypkg
-  controller-wheels/            # 运行 Ansible 的 wheels，不是插件依赖
-  ansible/, docs/, README.md
-```
-
-制作机外层还有 `media-ready.json`、最终 tar.gz 和 `.sha256`。`images.lock.yaml` 的存在早于整个制包完成，不等于可交付；最终包和 readiness 结果完成后才能搬运。
-
-| 私有运行文件（以 `customer_state_root` 为根） | 含义/处理 |
-|---|---|
-| `state/certificates/`、`state/tls/` | CA/叶子证书和私钥；私钥不能进入公开介质，续跑保持同一身份 |
-| `state/auth.json`、`state/htpasswd`、`state/auth/htpasswd` | 目标 Registry 的 auth JSON/bcrypt；不同于联网源 authfile |
-| `state/local-s3.json`、`state/local-s3.env` | SeaweedFS 认证及 bucket；与集群 `dify-local-s3` 必须一致 |
-| `state/registry-data/`、`state/s3-data/` | Registry 和对象数据；持久化与备份对象 |
-| `state/image-map.json`、`state/import.yaml` | 全部源引用 → 实际目标 manifest digest，以及 lock/CA 绑定 |
-| `customer-binding.json`、`.ansible-run/` | 自动安装的集群/介质绑定和独占租约，不是手工模板 |
-| `stages/`、`logs/`、`deployment-ready.json` | 历史阶段、私有诊断、部署验收结果；阶段标记不代替实时检查 |
-
-包完整性不仅是外层 SHA：自动安装验证文件集合、每个文件 SHA、无链接/特殊文件、OCI manifest/config 摘要。`checksums.json` 是 JSON，不能直接用 `sha256sum -c checksums.json`；手工交付要提供经验证的对应校验办法，不能省略或让客户自行重写封存清单。
-
-## 6. 手工交付的产物关卡（发布前必须完成）
-
-**下表的手工产物目前不是 bundle 的既有文件。** Dify 团队须按第 7～10 节从同一版本源材料准备、审核和封存，给出真实文件名、输入方式和 SHA；客户手册不得引用虚构的 `manual/` 目录或已被自动安装清理的临时文件。
-
-| 手工交付物 | 内容/来源 | 秘密与校验要求 |
-|---|---|---|
-| 手工参数表 | 第 4 节实际域名、版本、路径、SC、端口 | 参数来源、执行主机、用户和保存位置明确 |
-| 软件/镜像 BOM | Chart、CLI、RPM 前提、29 引用只是本次实例、插件/模型清单 | 按本次 lock，记录源码提交、架构、摘要、授权，不用浮动 tag 当最终身份 |
-| OCI/完整介质验证说明 | 对照 `verify.yml`、export-image.yml | 损坏/缺失/额外文件与错误架构都应阻止继续 |
-| 服务配置模板 | nginx、systemd、TLS、auth、S3 文件格式 | 公开模板无凭证，客户私有文件 0600；不要误带实验账号 |
-| 依赖资源 YAML | prereqs、plugin-crds、PostgreSQL、Redis、Qdrant，按组分文件 | 镜像已映射、Job/SA/RBAC 就绪顺序明确；不得依赖 ArgoCD sync-wave |
-| vendor 离线 values 模板 | 第 9 节覆盖项，说明 Secret 值如何进入私有 values | 不把明文写回 ConfigMap/Git；从集群取值后仅在私有文件处理 |
-| vendor 离线 Chart 或等价正式机制 | 第 10 节的资源转换、字面量配置、hooks、digest | 必须保留 Helm hooks；若用正式 Chart 原生支持替代，应重新验证等价行为 |
-| 验收资源与记录表 | S3 探针 Job、Pod/镜像/DB/Redis/HTTPS 及业务检查 | pinned AWS CLI 镜像、临时对象/Job 清理；结果不含密钥 |
-| 备份/重启/删除说明 | 第 12 节 | 数据损失、共享集群资源保留、恢复先后次序明确 |
-
-推荐先使用同一受控介质对照自动流程产生的对象和本地真实 Chart 渲染，再在**空白验证目标**独立执行手工步骤。当前已部署的 RHDP 环境是参考证据，不能直接拿它做第二个安装器的接管试验；同名容器、namespace 或 Helm release 存在时应停下核对归属。
-
-## 7. 手工阶段一：准备、搬运与离线基础服务
-
-### 7.1 联网侧准备
-
-自动实现对应 `prepare/preflight.yml`、`tools.yml`、`export.yml`、`export-image.yml`、`plugin-media.yml`、`controller.yml`、`package.yml`。
-
-联网工作包括匹配版本的 oc/Helm（发布方 SHA 校验）、Chart 身份检查、最终配置、镜像静态和运行时引用收集、按平台拉取/OCI 导出、插件/依赖审核、完整校验和归档。Chart 当前从 `https://charts.openshift.io` 获取；离线侧不运行 Helm repo update、在线 helm pull/dependency update、podman pull 或公网 pip install。
-
-不能只搜索 Deployment 的 `image:`：还必须收集 Job/initContainers、`plugin_connector` 的 shader/gateway/busyBox/awsCli、generatorConf 内各 Python 版本基础镜像，以及 Registry/nginx/SeaweedFS。可选插件轮子必须满足它们各自 Python ABI/平台；控制端 Python 3.12 wheels 不表示插件 Python 3.13/3.14 依赖已齐全。默认关闭 Marketplace；模型权重和 License 不随平台介质自动补齐。
-
-如果 Dify 同事只需要验证“手工离线安装”，可先用受控 Ansible 制作同一镜像介质，手工执行离线侧步骤。该验证不等于“纯手工制包”已验证，手册必须说明制作侧的方式。
-
-### 7.2 离线侧设置参数与校验
-
-以下只读/准备命令在**离线 Podman 主机的 Bash、root shell**执行。路径通过交互填写实际值，避免把 Demo 路径当客户默认；安装手工目标不能与现有自动安装共用状态目录或未经审核接管同名资源。
+**以下第2～12节均在离线Podman主机，用Bash的root shell执行。** 另开终端时先恢复本节变量。路径输入绝对路径、不含空格；不要照抄RHDP目录。制作侧已将介质放到接收目录、完整源码解包到另一个目录；它们与私有状态目录分开。
 
 ```bash
+set -euo pipefail
 umask 077
-printf '本次已解包 bundle 的绝对路径：'
-read -r DIFY_BUNDLE
-printf '本次手工安装专用私有状态根目录：'
-read -r DIFY_MANUAL_ROOT
-printf '客户管理员提供的 kubeconfig 绝对路径：'
+printf '介质tar.gz和sha256所在接收目录：'
+read -r MEDIA
+printf '已解包完整源码的根目录：'
+read -r SOURCE
+printf '本次手工安装的新私有工作目录（必须不存在）：'
+read -r WORK
+printf '客户kubeconfig绝对路径：'
 read -r KUBECONFIG
 export KUBECONFIG
-printf '客户确认的 context：'
-read -r DIFY_CONTEXT
-printf 'Podman 服务主机 FQDN，不带协议或端口：'
-read -r DIFY_SERVICE_HOST
-export PATH="$DIFY_BUNDLE/bin:$PATH"
-oc --context "$DIFY_CONTEXT" get clusterversion version
-oc --context "$DIFY_CONTEXT" get ingress.config.openshift.io cluster
-oc --context "$DIFY_CONTEXT" get nodes
-oc --context "$DIFY_CONTEXT" get storageclass
+printf '客户确认的context：'
+read -r CTX
+[[ "$MEDIA" == /* && "$SOURCE" == /* && "$WORK" == /* && "$KUBECONFIG" == /* ]]
+[[ "$WORK" != *[[:space:]]* && "$MEDIA" != *[[:space:]]* && "$SOURCE" != *[[:space:]]* ]]
+[[ "$WORK" != "$MEDIA"/* && "$WORK" != "$SOURCE"/* ]]
+test "$(realpath -m -- "$WORK")" = "$WORK"
+test ! -e "$WORK"
+install -d -m 0700 "$WORK"
+cd "$MEDIA"
+sha256sum -c dify-offline-3.9.8-linux-amd64.tar.gz.sha256
+test ! -e bundle
+tar --no-same-owner -xzf dify-offline-3.9.8-linux-amd64.tar.gz
+export BUNDLE="$MEDIA/bundle"
+export PATH="$BUNDLE/bin:$PATH"
+export STATE="$WORK/state"
+install -d -m 0700 "$STATE"
+test -f "$SOURCE/docs/manual-offline/map-images.jq"
+test -f "$SOURCE/docs/manual-offline/resolve-values.jq"
+test -f "$SOURCE/docs/manual-offline/s3-probe.sh"
+jq --version
+yq --version
+helm version --short
+podman --version
 ```
 
-参数必须与最终 `config.yaml` 一致，不是让客户输入一个新域名覆盖原包。先在归档所在目录用同名 `.sha256` 校验，再解包并按第 5 节验证完整内容。命令失败、集群不健康、身份/域名/架构不符时停止。状态根目录必须专用、真实路径、无祖先 symlink/Git；不能只用 `mkdir` 代替这些检查。
+如果接收目录已经解包并校验成功，只跳过`test ! -e bundle`和解包命令，继续设置BUNDLE；不要在已有bundle上覆盖解包。WORK必须是专用真实路径，不位于源码、bundle或Git目录内，也不通过symlink指向这些目录。所有步骤失败后先停下，不跳过校验继续执行。
 
-### 7.3 TLS 和认证
+### 2.3 校验完整文件集合
 
-单主机三个 HTTPS 服务共用叶子证书，SAN 必须包含 `DIFY_SERVICE_HOST`。参考实现自建 RSA 3072、365 天 CA 和叶子证书；客户可一次性提供叶子证书、私钥、CA 三件套。自建 CA 仅用于客户许可的场景；证书到期监控和轮换必须进客户运维计划。已有证书/认证不可在重跑时重新随机生成。
-
-在私有状态的 `state/` 下准备 `certificates/server.crt`、`server.key`、`ca.crt`，并复制叶子证书/私钥到 `tls/`。验证例子（必须是此前已准备的文件）：
+外层SHA通过后，继续验证包内文件集合及内容；不能直接`sha256sum -c checksums.json`，它是JSON文件。下面限制文件名为本工程受控字符，拒绝路径穿越、额外文件和链接，任何不支持的文件名需重新审查交付包，不通过重写清单绕过。
 
 ```bash
-DIFY_STATE="$DIFY_MANUAL_ROOT/state"
-openssl verify -CAfile "$DIFY_STATE/certificates/ca.crt" \
-  -verify_hostname "$DIFY_SERVICE_HOST" "$DIFY_STATE/certificates/server.crt"
+jq -e 'all(keys[]; test("^[A-Za-z0-9_./+-]+$") and
+  (startswith("/")|not) and (split("/")|index("..")|not))' \
+  "$BUNDLE/checksums.json" >/dev/null
+test -z "$(find "$BUNDLE" ! -type f ! -type d -print -quit)"
+jq -r 'keys + ["checksums.json"] | sort[]' "$BUNDLE/checksums.json" > "$WORK/expected-files"
+find "$BUNDLE" -type f -printf '%P\n' | LC_ALL=C sort > "$WORK/actual-files"
+diff -u "$WORK/expected-files" "$WORK/actual-files"
+jq -r 'to_entries[] | "\(.value)  \(.key)"' "$BUNDLE/checksums.json" > "$WORK/files.sha256"
+(cd "$BUNDLE" && sha256sum -c "$WORK/files.sha256")
+yq -o=json '.' "$BUNDLE/config.yaml" > "$WORK/config.json"
+yq -o=json '.' "$BUNDLE/images.lock.yaml" > "$WORK/lock.json"
+jq -e '.format == 1 and .status == "exported" and .platform == "linux/amd64" and (.images|length)>0' \
+  "$WORK/lock.json" >/dev/null
 ```
 
-Registry 使用 bcrypt htpasswd；参考账号名 `offline`，新密码 64 个字母数字。根 `state/htpasswd` 与容器挂载 `state/auth/htpasswd` 一致；`state/auth.json` 的 `auths` 键必须是实际 `主机:5000`，auth 为 base64(username:password)，这是凭证而不是加密。采用交互输入/stdin或客户秘密管理流程，不在 argv、终端输出、命令历史或手册填真实密码。
+所有输出必须通过。后续文件只写WORK，不改bundle。`images.lock.yaml`中`source`是引用、`archive`是归档相对路径、`imageId`是OCI config身份；源Docker ID可能因转OCI变化，不能拿`sourceImageId`替代加载ID。
 
-S3 的 `local-s3.json` 包含 `bucket`、`accessKey`、`secretKey`；`local-s3.env` 是 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`S3_BUCKET` 三行。私有文件 0600、父目录 0700；同一值稍后写入集群 Secret。密钥格式/生成方式由 Dify 手工交付说明确定，不把模板占位字符串用于实际运行。
+## 3. 核对现场配置和空白目标
 
-### 7.4 启动单机 Podman 服务
-
-自动依据 `images.lock.yaml` 中 roles=`registry`、`wheel-server`、`object-store` 找到归档并用 `podman --cgroup-manager=cgroupfs load -i` 加载。使用 `imageId` 启动；不能用源 tag 临时拉镜像，也不能假设第 000 张就是 Registry。
-
-`sourceImageId` 是源镜像身份，`imageId` 是 OCI config 的实际可加载身份，两者可能不同；`sourceDigest` 指归档内选中的 OCI manifest，不是目标 Registry push 后的 digest。
-
-手工对应的服务契约如下；Dify 团队应按它提供审核过的命令和 nginx 配置，而不是让客户猜挂载目录：
-
-| 容器 | 创建参数和挂载契约 |
-|---|---|
-| `dify-offline-s3` | rootful、`--pull=never`、`--restart=unless-stopped`、网络 `dify-offline`、`--user 0`、env-file `state/local-s3.env`、`state/s3-data:/data:Z`、命令 `mini -dir=/data`；不加公网端口映射 |
-| `dify-offline-registry` | rootful、禁止 pull、restart 同上、`5000:5000`；`state/registry-data:/var/lib/registry:Z`、`state/tls:/certs:ro,z`、`state/auth:/auth:ro,Z`；`REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.crt`、`REGISTRY_HTTP_TLS_KEY=/certs/server.key`、`REGISTRY_AUTH=htpasswd`、`REGISTRY_AUTH_HTPASSWD_REALM=offline`、`REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd` |
-| `dify-offline-pypi` | rootful、禁止 pull、restart 同上、网络 `dify-offline`，发布 9443 和 9444；`bundle/pypi:/usr/share/nginx/html:ro,Z`、`state/tls:/certs:ro,z`、`state/nginx.conf:/etc/nginx/nginx.conf:ro,Z` |
-
-三者标签为 `io.dify.offline.bundle=<images.lock.yaml 的 SHA256>`；它证明与哪份 lock 对应，不是产品版本标签。已存在容器须核对 ID、标签、实际挂载和启动历史，不能直接 `rm -f` 后重建；自动重建仅允许已证明归属且从未启动的部分服务。
-
-nginx 的两个 server 分别在 9443 提供 `/simple/` 静态索引（autoindex off），在 9444 反向代理 `http://dify-offline-s3:8333`。S3 代理设置 `client_max_body_size 0`、保留 `$http_host`、关闭请求及响应 buffering；两者共用 `/certs/server.crt` 和 `/certs/server.key`。S3 认证由后端提供，wheel 索引本身无账号认证，因此只能放在客户允许访问的内网范围。`:z` 是共享 SELinux 标记，不能把共用 TLS 目录随意改成独占 `:Z`。
-
-启动顺序为 S3 → Registry → nginx。校验必须保留 TLS 验证：Registry 认证 GET `/v2/` 为 200，wheel `/simple/` 为 200，匿名 S3 根路径为 403。403 在这里是匿名被拒绝，不是认证 S3 功能已通过；后面还要做读写删除测试。
-
-手工启动 Registry 后，可通过 Podman 交互登录生成目标 authfile；应使用与 htpasswd 相同的账号密码和私有 CA，不能继续使用联网源 authfile。具体命令选项以手工交付验证的 Podman 版本为准。
-
-## 8. 手工阶段二：镜像导入与三层 CA 信任
-
-### 8.1 镜像映射算法
-
-对 lock 中每个源引用，按 **lock 列表原始索引**映射为 `REGISTRY/dify-offline/image-NNN:bundle`。其中 NNN 是从 000 开始的三位索引，不根据人读的镜像名字排序重编号。
-
-1. 校验 OCI archive 与 config/manifest，load 本地归档，使用 lock 的 `imageId`。
-2. 若是 Kaniko executor 或 plugin-build-base-python，先离线派生 CA 镜像：下面的约束必须一起保留。
-3. 向目标 Registry 使用私有 `auth.json` 和 `podman-certs/ca.crt` 进行 TLS 验证 push，以 `--digestfile` 保存目标摘要。
-4. 记录 `source → REGISTRY/dify-offline/image-NNN@sha256:...`。所有镜像 push 成功之后才发布完整映射；不拿源 digest 替代实际 push digest。
-
-用于解释“单张普通镜像 push”的命令如下；输入均取自已核对的 lock 和本次索引，不是固定样例镜像。该片段不替代完整导入记录、CA 派生和介质校验：
+配置已经在制作时写入`config.yaml`，离线端读出，不重新输入一套不同的域名。
 
 ```bash
-printf '本条 lock 记录的 OCI 归档绝对路径：'
-read -r DIFY_IMAGE_ARCHIVE
-printf '本条 lock 记录的 imageId（含 sha256:）：'
-read -r DIFY_IMAGE_ID
-printf '本条镜像的目标仓库（含主机:端口/dify-offline/image-NNN，不含tag）：'
-read -r DIFY_IMAGE_REPOSITORY
-podman --cgroup-manager=cgroupfs load -i "$DIFY_IMAGE_ARCHIVE"
-podman --cgroup-manager=cgroupfs push \
-  --authfile "$DIFY_STATE/auth.json" \
-  --cert-dir "$DIFY_STATE/podman-certs" \
-  --digestfile "$DIFY_STATE/push-digest" \
-  "$DIFY_IMAGE_ID" "docker://$DIFY_IMAGE_REPOSITORY:bundle"
+REGISTRY=$(jq -r '.offline.registry' "$WORK/config.json")
+HOST=${REGISTRY%:*}
+REGISTRY_PORT=${REGISTRY##*:}
+PIP_URL=$(jq -r '.offline.pipMirror' "$WORK/config.json")
+S3_PORT=$(jq -r '.offline.localS3.port' "$WORK/config.json")
+BUCKET=$(jq -r '.offline.localS3.bucket' "$WORK/config.json")
+APPS=$(jq -r '.deployer.domain' "$WORK/config.json")
+LOCK_SHA=$(sha256sum "$BUNDLE/images.lock.yaml" | awk '{print $1}')
+export HOST REGISTRY REGISTRY_PORT PIP_URL S3_PORT BUCKET APPS LOCK_SHA
+jq -e '.namespace == "dify" and .offline.platform == "linux/amd64" and
+  .offline.localS3.enabled == true and .offline.localS3.port == 9444 and
+  (.offline.pipMirror | endswith(":9443/simple/")) and
+  .components.objectStorage.enabled == false and .components.minio.enabled == false' \
+  "$WORK/config.json" >/dev/null
+test "$REGISTRY_PORT" = 5000
+test "$PIP_URL" = "https://$HOST:9443/simple/"
+oc --context "$CTX" get clusterversion version -o json > "$WORK/cluster.json"
+oc --context "$CTX" get ingress.config.openshift.io cluster -o json > "$WORK/ingress.json"
+jq -e --arg apps "$APPS" '.spec.domain == $apps' "$WORK/ingress.json" >/dev/null
+jq -e '.status.desired.version | test("^4\\.(20|21)\\.")' "$WORK/cluster.json" >/dev/null
+oc --context "$CTX" get nodes -o wide
+oc --context "$CTX" get nodes -o json > "$WORK/nodes.json"
+jq -e '(.items|length)>0 and all(.items[];
+  .status.nodeInfo.architecture=="amd64" and any(.status.conditions[]; .type=="Ready" and .status=="True"))' \
+  "$WORK/nodes.json" >/dev/null
+oc --context "$CTX" get clusteroperators
+oc --context "$CTX" get storageclass
+for component in postgresql redis qdrant; do
+  storage_class=$(jq -er --arg c "$component" '.components[$c].storage.storageClassName | select(length>0)' "$WORK/config.json")
+  oc --context "$CTX" get storageclass "$storage_class"
+done
+oc --context "$CTX" get ns dify --ignore-not-found -o name > "$WORK/existing-namespace"
+test ! -s "$WORK/existing-namespace"
+for name in dify-offline-s3 dify-offline-registry dify-offline-pypi; do
+  if podman --cgroup-manager=cgroupfs container exists "$name"; then
+    printf '同名容器已存在，停止：%s\n' "$name"
+    exit 1
+  fi
+done
+getent ahostsv4 "$HOST"
 ```
 
-CA 派生构建必须 `--pull=never --network=none`，以已加载 ID 的本地 tag 为 FROM；不能暗中联网补层。Kaniko 加入 `/kaniko/ssl/certs/offline-registry.crt` 并设置 `SSL_CERT_DIR=/kaniko/ssl/certs`；Python 构建基础镜像加入 `/opt/offline-ca.crt`，设置 `SSL_CERT_FILE`、`REQUESTS_CA_BUNDLE`、`PIP_CERT` 指向该文件，及 `UV_NATIVE_TLS=true`。最终 push 的是派生 image ID，映射记录其新 digest。
+节点必须Ready、版本/架构匹配，全部ClusterOperator健康；存储类实际存在。此稿固定5000/9443/9444，其他端口先同步nginx、映射和验证命令后另测。公共values-disconnected.yaml不是最终配置：客户Role还覆盖了对象存储开关、主机、端口、SC，手工应以bundle/config.yaml为准。
 
-### 8.2 三个不同层面的信任
+## 4. 生成稳定凭证和TLS
 
-| 信任层 | 解决的问题 | 不能替代 |
-|---|---|---|
-| Podman CLI 的 `state/podman-certs/ca.crt` | load/build 后向 Registry push、登录 | 节点 CRI-O 的拉取信任 |
-| OpenShift image additionalTrustedCA | 节点拉取 Registry 镜像 | 应用访问 S3、构建进程访问 Registry/pip |
-| `offline-registry-ca` + Dify customCA + CA 派生构建镜像 | 应用与动态插件构建过程使用私有 TLS 服务 | 浏览器访问 Route 的 router CA |
-
-OpenShift 侧先读取 `image.config.openshift.io/cluster.spec.additionalTrustedCA.name`。若已引用某个 ConfigMap，**合并到该 ConfigMap而不替换其其他键**；若为空，才创建专用 `dify-offline-registry-cas`。数据键使用 `主机..5000`（端口分隔符 `:` 转成 `..`），值是 PEM CA。更新 image config 时检查原 resourceVersion，避免覆盖其他管理员的并发操作。依据见 [OpenShift 4.20 CA 配置](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/observability/builds_using_buildconfig/setting-up-trusted-ca)。
-
-不要为了方便将 Registry 设置为 insecure、覆盖全局 pull secret 或清空既有 additionalTrustedCA。节点配置变更需观察 MachineConfigPool/节点及实际镜像拉取，不能把 ConfigMap 创建成功当作完成。
-
-## 9. 手工阶段三：集群前置资源、数据库及 values
-
-### 9.1 集群秘密与权限
-
-创建 namespace `dify` 后，先准备以下身份；秘密只在客户私有文件/集群中处理，不提交 Git：
-
-| Secret | 类型/键 | 来源和使用者 |
-|---|---|---|
-| `offline-registry-pull` | kubernetes.io/dockerconfigjson，`.dockerconfigjson` | 目标 Registry `state/auth.json`；全部工作负载拉取 |
-| `image-repo-secret` | kubernetes.io/dockerconfigjson，`.dockerconfigjson` **和** `config.json` | 同一目标 auth JSON；Dify 插件构建推送固定名称 |
-| `offline-registry-ca` | Opaque，`ca.crt` | Podman 服务 CA，供应用和探针挂载 |
-| `dify-offline-keys` | `appSecretKey`、`innerApiKey`、`dashboardSecretKey` | 初次生成稳定随机值，自动实现为各 56 字母数字；重跑复用 |
-| `dify-local-s3` | `accessKey`、`secretKey` | 与本地主机 S3 同一身份；不生成另一套值 |
-| `dify-postgresql` | `database`、`username`、`password` | 生成凭证 Job；默认 dify/dify 与 values 一致 |
-| `dify-redis` | `password` | 同一 Job |
-| `dify-qdrant` | `apiKey` | 同一 Job |
-
-手工可由客户秘密管理流程预置等价 Secret，或使用本地 prereqs Chart 中的 `dify-generate-secrets` Job；已有 Secret 不轮换。`image-repo-secret` 不能只创建 `.dockerconfigjson` 而省掉 `config.json`。Secret 中 data 是 base64，不是加密。
-
-本地 prereqs Chart 负责 SA/RBAC、anyuid 基线和专用 SCC；sandbox 的 `dify-sandbox` 允许 SYS_CHROOT/所需提权但不允许 privileged 容器或 host access；`dify-nonroot` 优先级高于 anyuid，用于 plugin connector 等已列出的 SA。按实际渲染清单逐一交给客户平台管理员审核，不全 namespace 绑定 privileged。prereqs 的 privilegedForPluginBuild=false 不代表 vendor Chart 自己的 SCC/RoleBinding 已全部移除；最终权限必须对两个来源的渲染结果一起核对。插件 CRD 为 `difyplugins.enterprise.dify.ai`，需要 Established 后再部署控制器；不能只装命名空间 Role。
-
-默认离线关闭 prereqs 的在线 imageBuilder/imageRepoSecret Job、RHDP 用户授权、观测集成等；Dify child 的 `chart.enabled=false`，防止渲染在线 ArgoCD Application。模板中的历史 ArgoCD 注解不能代替手工执行顺序。
-
-### 9.2 依赖资源顺序
-
-本地 Chart 位置是 `bundle/source/examples/helm/components/`，顺序为 `dify-prereqs` → `plugin-crds` → `postgresql` → `redis` → `qdrant`。默认不执行 objectstorage/minio/embedder。每组需完成 apply 和对应 readiness，才进入下一组：SA/RBAC 在生成凭证 Job 之前，Job 成功和数据库 Secret 在 StatefulSet 之前。
-
-**values 形状是高风险点：**总配置是 `components.postgresql`，子 Chart 却读取顶层 `postgresql`。不能直接把 `bundle/config.yaml` 当子 Chart `-f` 使用。按 `render-child.yml` 把对应组件映射到顶层 key，加入 `namespace: dify`、`serviceAccountName: dify`。plugin-crds 输入是 `plugin_controller.installCrd: true`；Dify child 还需 deployer、空 litemaas 和 objectStorage 上下文。具体字段以子 Chart values 和模板为准。
-
-当前 PostgreSQL init ConfigMap 的启动脚本显式确保 `dify`、`enterprise`、`audit`、`dify_plugin_daemon` 四个数据库存在。不要沿用 vendor values 模板中的历史注释，假定插件库会自动创建；以 `postgresql/templates/init-databases.yaml` 的实际实现为准。手工手册应等待 StatefulSet Ready 并确认四库，再启动应用；最终验收还需再次查询。
-
-PostgreSQL `fsGroup=26`、Redis `fsGroup=1001` 是现有镜像/存储适配，不随意删除。PVC 的 WaitForFirstConsumer 可能在 Pod 调度后才 Bound，容量/SC/权限和实际数据写入都需检查。
-
-### 9.3 vendor values 必须具备的离线配置
-
-先用本地 Helm 查看 Chart defaults，并参考 `components/dify/templates/_values.tpl` 的基础应用配置，再叠加下表。**该模板本身不是最终离线 values**，直接使用会保留内置 Registry/默认存储等在线假设。
-
-| 字段 | 本方案要求 |
-|---|---|
-| `global.openshift.enabled/routes.enabled` | true；六个 Route，edge TLS，HTTP redirect；Ingress 关闭 |
-| `global.*Domain` | Console/API/App/Upload/Enterprise/Trigger 真实主机名；保持主机名及 HTTPS，不写 Jump IP |
-| Route annotations | timeout 600s 用于长请求/SSE；forwarded headers append，仍需单独业务测试流式响应 |
-| `externalDatabase` | PostgreSQL Service、5432、四个库名、dify 用户及对应 Secret 密码 |
-| `externalRedis` | Redis Service、6379、对应 Secret 密码 |
-| `vectorDB.externalQdrant` | **嵌套在 vectorDB 下**，Service HTTP endpoint 和 API key；不是顶层 externalQdrant |
-| `persistence.s3` | endpoint `https://Podman主机:9444`、bucket dify、region us-east-1、addressType 空、useAwsManagedIam/useAwsS3=false，使用 dify-local-s3 身份 |
-| `global.marketplace.enabled` | false；不能通过 overlay 悄悄重新打开 |
-| `global.customCA` | enabled=true、existingSecret=offline-registry-ca |
-| `global.appSecretKey/innerApiKey`、`enterprise.appSecretKey` | 分别取 dify-offline-keys 的 appSecretKey/innerApiKey/dashboardSecretKey |
-| `imagePullSecrets` | 包含 offline-registry-pull；最终各类 Pod spec/SA 仍需独立检查 |
-| `plugin_connector` | imageRepoPrefix=`Registry/plugins`、imageRepoType=docker、imageRepoSecret=image-repo-secret、insecureImageRepo=false |
-| `plugin_connector.generatorConf` | Python pipMirror 为本地 HTTPS `/simple/`；所有 Python build-base 引用映射为目标 digest |
-| shaderImage/gatewayImage/busyBoxImage/awsCliImage | 从真实 defaults 得到源引用，再用完整 image-map 映射；在 Helm 渲染/Secret checksum 计算前处理 |
-
-`@@secret:name/key@@` 是本工程占位协议，不是 Helm 或 Dify 会自动识别的语法。自动入口从 `dify` namespace 读取、base64 解码，并按 JSON 字符串规则转义后放入私有 values；不把密码拼进 shell 或无转义的 sed。手工交付必须提供等价的秘密取值/转义流程，并验证 `@@secret:` 已全部消失。生成文件 0600，保留/清理和审计按照客户策略。
-
-## 10. 手工阶段四：资源转换、Helm 安装与 hooks
-
-当前实现不是把 vendor Chart 解包后直接 `oc apply`：它渲染本地 Chart、转换资源，再构造临时派生 Chart，由 Helm 执行安装及 hooks，结束后清理私有工作区。
-
-手工方式必须实现同一结果，或由 Dify 团队在正式 Chart 中提供并验证等价原生能力：
-
-1. **镜像替换匹配完整引用。** 最终 Deployment/StatefulSet/Job/initContainer、ConfigMap 文本和运行时配置全部使用目标内网 digest；不能把 `busybox:latest` 当子串替换，误改 `registry/other/busybox:latest`。
-2. **Secret 中的文本也要转换。** 解码插件生成器等文本字段、替换、原样保留必要换行，再 base64；二进制字段保持不变。只扫描 YAML `image:` 会漏掉运行时创建的 Pod。
-3. **先改运行时 values，再让 Helm计算 Secret checksum。** 只在渲染后改 Secret 内容会造成 annotation/checksum 不一致。
-4. **补齐拉取 Secret。** Pod/SA、Deployment/StatefulSet/DaemonSet/ReplicaSet/Job 的 template 和 CronJob 的 jobTemplate 都需覆盖，不能只改顶层 Deployment。
-5. **保留 OTLP 修正。** `dify-dify-enterprise-plugin-daemon-config` 中 OTLP_* endpoint 末尾 `-collector-svc:4317` 调整为 `:4318`；这是已审查的服务行为适配，不是将所有组件 gRPC 端口一律改成 HTTP。
-6. **保留字面量与 hooks。** 渲染后的 ConfigMap 内可能有 `{{ ... }}` 文本，不能当模板再执行；hook annotations、权重和删除策略应保持。当前通过每个资源 base64 的 Helm 字面量模板实现，不使用 Python post-renderer。
-
-[Helm hooks](https://helm.sh/docs/topics/charts_hooks/) 的生命周期不能由对渲染结果一次 `oc apply -f` 替代。依赖组资源由 oc 管理，vendor 资源由 Helm release 管理，也不能说所有资源都属于 Helm。
-
-自动入口先证明没有无关同名 release，再设置 `dify-offline-install` 所有者 ConfigMap，最后执行本地派生 Chart 的 `helm upgrade --install dify ... --kubeconfig ... --kube-context ... -n dify --force --wait --timeout 15m`。其中 `--force` 有重建资源含义，手工手册不能把该选项当作对任何已有 release 的通用修复；须说明初装/重装/升级及接管策略。不得对在线 ArgoCD 管理的 release 使用这条链路。
-
-**手工交付阻断项：**当前包没有可直接引用的最终派生 Chart、依赖 YAML 或完整离线 values；它们在运行中才生成/包含秘密。Dify 同事应先制作第 6 节的正式手工材料，验证上述转换后再写最终 copy/paste 命令。不能在手册凭空写 `helm install dify bundle/manual-chart`，也不能复制一份临时 Chart 后去掉校验称为等价。若产品 Chart 能直接支持全部离线参数，应以该正式版本重新渲染、核对资源与运行时镜像并完成业务验证。
-
-## 11. 手工阶段五：验收、浏览器及故障定位
-
-### 11.1 部署验收顺序与只读命令
-
-以下仍在离线主机 root Bash 中使用第 7.2 节设置的 kubeconfig/context；不打印凭证。
+只在初装生成，不能为“重跑”重新生成另一套。目录权限0700，文件由umask077创建。以下自建CA适用于允许实验私有PKI的现场，有效期365天；客户正式PKI应提供相同路径的server.crt/server.key/ca.crt，SAN覆盖HOST，并跳过生成步骤。
 
 ```bash
-oc --context "$DIFY_CONTEXT" get pods -n dify
-oc --context "$DIFY_CONTEXT" get pvc -n dify
-oc --context "$DIFY_CONTEXT" wait pods -n dify \
-  --field-selector=status.phase!=Succeeded,status.phase!=Failed \
+install -d -m 0700 "$STATE/certificates" "$STATE/tls" "$STATE/auth" \
+  "$STATE/registry-data" "$STATE/s3-data" "$STATE/podman-certs" "$WORK/keys"
+openssl req -x509 -newkey rsa:3072 -nodes -days 365 \
+  -keyout "$STATE/certificates/ca.key" -out "$STATE/certificates/ca.crt" \
+  -subj '/CN=Dify Offline CA' -addext 'basicConstraints=critical,CA:TRUE'
+openssl req -new -newkey rsa:3072 -nodes \
+  -keyout "$STATE/certificates/server.key" -out "$STATE/certificates/server.csr" -subj "/CN=$HOST"
+printf 'subjectAltName=DNS:%s\nbasicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\n' \
+  "$HOST" > "$STATE/certificates/server.ext"
+openssl x509 -req -days 365 -in "$STATE/certificates/server.csr" \
+  -CA "$STATE/certificates/ca.crt" -CAkey "$STATE/certificates/ca.key" -CAcreateserial \
+  -extfile "$STATE/certificates/server.ext" -out "$STATE/certificates/server.crt"
+openssl verify -CAfile "$STATE/certificates/ca.crt" -verify_hostname "$HOST" "$STATE/certificates/server.crt"
+cp "$STATE/certificates/server.crt" "$STATE/tls/server.crt"
+cp "$STATE/certificates/server.key" "$STATE/tls/server.key"
+cp "$STATE/certificates/ca.crt" "$STATE/podman-certs/ca.crt"
+openssl rand -hex 32 > "$WORK/keys/registry-password"
+htpasswd -niB offline < "$WORK/keys/registry-password" > "$STATE/htpasswd"
+cp "$STATE/htpasswd" "$STATE/auth/htpasswd"
+jq -n --arg registry "$REGISTRY" --rawfile password "$WORK/keys/registry-password" \
+  '{auths:{($registry):{auth:(("offline:"+($password|rtrimstr("\n")))|@base64)}}}' > "$STATE/auth.json"
+openssl rand -hex 12 > "$WORK/keys/s3-access"
+openssl rand -hex 32 > "$WORK/keys/s3-secret"
+jq -n --arg bucket "$BUCKET" --rawfile access "$WORK/keys/s3-access" --rawfile secret "$WORK/keys/s3-secret" \
+  '($access|rtrimstr("\n")) as $a | ($secret|rtrimstr("\n")) as $s | {bucket:$bucket,accessKey:("dify"+$a),secretKey:$s}' \
+  > "$STATE/local-s3.json"
+jq -r '["AWS_ACCESS_KEY_ID=" + .accessKey, "AWS_SECRET_ACCESS_KEY=" + .secretKey, "S3_BUCKET=" + .bucket] | join("\n")' \
+  "$STATE/local-s3.json" > "$STATE/local-s3.env"
+chmod 0600 "$STATE"/*.json "$STATE"/*.env "$STATE/htpasswd" "$STATE"/certificates/* "$STATE"/tls/* "$STATE"/auth/*
+```
+
+认证只写入私有文件；不能输出auth.json给同事看，也不能将源拉取authfile当作本地Registry凭证。上面的密码不出现在argv中。`local-s3.json`之后会原样转成集群S3 Secret。
+
+## 5. 手工加载服务镜像并启动三个容器
+
+先验证和加载roles标记的服务镜像。后面第6节还会遍历全部镜像导入Registry，不假定服务镜像在某个固定编号。
+
+```bash
+jq -r '.images[] | select((.roles|length)>0) | .archive' "$WORK/lock.json" |
+while IFS= read -r archive; do
+  podman --cgroup-manager=cgroupfs load -i "$BUNDLE/$archive"
+done
+REGISTRY_ID=$(jq -r '.images[] | select(.roles|index("registry")) | .imageId' "$WORK/lock.json")
+NGINX_ID=$(jq -r '.images[] | select(.roles|index("wheel-server")) | .imageId' "$WORK/lock.json")
+S3_ID=$(jq -r '.images[] | select(.roles|index("object-store")) | .imageId' "$WORK/lock.json")
+test -n "$REGISTRY_ID" && test -n "$NGINX_ID" && test -n "$S3_ID"
+cat > "$STATE/nginx.conf" <<'NGINX'
+events {}
+http {
+  server {
+    listen 9443 ssl;
+    ssl_certificate /certs/server.crt;
+    ssl_certificate_key /certs/server.key;
+    root /usr/share/nginx/html;
+    location /simple/ { autoindex off; }
+  }
+  server {
+    listen 9444 ssl;
+    ssl_certificate /certs/server.crt;
+    ssl_certificate_key /certs/server.key;
+    client_max_body_size 0;
+    location / {
+      proxy_pass http://dify-offline-s3:8333;
+      proxy_set_header Host $http_host;
+      proxy_request_buffering off;
+      proxy_buffering off;
+    }
+  }
+}
+NGINX
+podman --cgroup-manager=cgroupfs network create dify-offline
+podman --cgroup-manager=cgroupfs create --name dify-offline-s3 --pull=never \
+  --restart=unless-stopped --label "io.dify.offline.bundle=$LOCK_SHA" \
+  --network dify-offline --user 0 --env-file "$STATE/local-s3.env" \
+  -v "$STATE/s3-data:/data:Z" "$S3_ID" mini -dir=/data
+podman --cgroup-manager=cgroupfs create --name dify-offline-registry --pull=never \
+  --restart=unless-stopped --label "io.dify.offline.bundle=$LOCK_SHA" -p 5000:5000 \
+  -v "$STATE/registry-data:/var/lib/registry:Z" -v "$STATE/tls:/certs:ro,z" -v "$STATE/auth:/auth:ro,Z" \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/server.crt -e REGISTRY_HTTP_TLS_KEY=/certs/server.key \
+  -e REGISTRY_AUTH=htpasswd -e REGISTRY_AUTH_HTPASSWD_REALM=offline \
+  -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd "$REGISTRY_ID"
+podman --cgroup-manager=cgroupfs create --name dify-offline-pypi --pull=never \
+  --restart=unless-stopped --label "io.dify.offline.bundle=$LOCK_SHA" --network dify-offline \
+  -p 9443:9443 -p 9444:9444 -v "$BUNDLE/pypi:/usr/share/nginx/html:ro,Z" \
+  -v "$STATE/tls:/certs:ro,z" -v "$STATE/nginx.conf:/etc/nginx/nginx.conf:ro,Z" "$NGINX_ID"
+podman --cgroup-manager=cgroupfs start dify-offline-s3 dify-offline-registry dify-offline-pypi
+podman --cgroup-manager=cgroupfs ps
+jq -r --arg registry "$REGISTRY" '.auths[$registry].auth | "Authorization: Basic "+.' \
+  "$STATE/auth.json" > "$WORK/registry-header"
+curl --noproxy '*' --cacert "$STATE/certificates/ca.crt" --header "@$WORK/registry-header" \
+  --fail --retry 10 --retry-connrefused "https://$REGISTRY/v2/"
+curl --noproxy '*' --cacert "$STATE/certificates/ca.crt" --fail "https://$HOST:9443/simple/"
+curl --noproxy '*' --cacert "$STATE/certificates/ca.crt" -sS -o /dev/null -w 'HTTP %{http_code}\n' "https://$HOST:9444/"
+```
+
+前两项应成功，匿名S3根路径应为403；403仅证明匿名被拒绝。S3原始8333/Admin端口不对外发布。TLS目录被两个容器共享，用`:z`，不随意改成独占`:Z`。wheel索引无账号认证，客户应限制内网访问范围。若服务启动慢可重做本节最后的检查，不重复create。
+
+## 6. 将所有镜像导入本地Registry
+
+目标仓库使用lock原始顺序的三位索引。每个归档先校验OCI manifest/config，加载后检查架构。Python构建基础镜像及Kaniko在本机加入CA，构建禁止pull和网络；最终记录的是push得到的**目标manifest digest**，不是源Docker ID或源manifest。
+
+```bash
+printf '{}\n' > "$STATE/image-map.json"
+COUNT=$(jq '.images|length' "$WORK/lock.json")
+for ((i=0; i<COUNT; i++)); do
+  source=$(jq -r --argjson i "$i" '.images[$i].source' "$WORK/lock.json")
+  archive=$(jq -r --argjson i "$i" '.images[$i].archive' "$WORK/lock.json")
+  image_id=$(jq -r --argjson i "$i" '.images[$i].imageId' "$WORK/lock.json")
+  source_digest=$(jq -r --argjson i "$i" '.images[$i].sourceDigest' "$WORK/lock.json")
+  tar -xOf "$BUNDLE/$archive" index.json > "$WORK/oci-index.json"
+  jq -e '.manifests|length==1' "$WORK/oci-index.json" >/dev/null
+  digest=$(jq -r '.manifests[0].digest' "$WORK/oci-index.json")
+  test "$digest" = "$source_digest"
+  tar -xOf "$BUNDLE/$archive" "blobs/sha256/${digest#sha256:}" > "$WORK/oci-manifest.json"
+  test "sha256:$(sha256sum "$WORK/oci-manifest.json" | awk '{print $1}')" = "$digest"
+  config_digest=$(jq -r '.config.digest' "$WORK/oci-manifest.json")
+  test "$config_digest" = "$image_id"
+  tar -xOf "$BUNDLE/$archive" "blobs/sha256/${config_digest#sha256:}" > "$WORK/oci-config.json"
+  test "sha256:$(sha256sum "$WORK/oci-config.json" | awk '{print $1}')" = "$image_id"
+  jq -e '.os=="linux" and .architecture=="amd64"' "$WORK/oci-config.json" >/dev/null
+  podman --cgroup-manager=cgroupfs load -i "$BUNDLE/$archive"
+  push_id=$image_id
+  if [[ "$source" == *kaniko-project/executor* || "$source" == */plugin-build-base-python:* ]]; then
+    builddir=$(mktemp -d "$STATE/ca-build.XXXXXX")
+    cp "$STATE/certificates/ca.crt" "$builddir/ca.crt"
+    podman --cgroup-manager=cgroupfs tag "$image_id" "localhost/dify-offline-base:$i"
+    printf 'FROM localhost/dify-offline-base:%s\n' "$i" > "$builddir/Containerfile"
+    if [[ "$source" == *kaniko-project/executor* ]]; then
+      printf 'COPY ca.crt /kaniko/ssl/certs/offline-registry.crt\nENV SSL_CERT_DIR=/kaniko/ssl/certs\n' >> "$builddir/Containerfile"
+    else
+      printf 'COPY ca.crt /opt/offline-ca.crt\nENV SSL_CERT_FILE=/opt/offline-ca.crt REQUESTS_CA_BUNDLE=/opt/offline-ca.crt PIP_CERT=/opt/offline-ca.crt UV_NATIVE_TLS=true\n' >> "$builddir/Containerfile"
+    fi
+    podman --cgroup-manager=cgroupfs build --pull=never --network=none --iidfile "$builddir/image-id" "$builddir"
+    push_id=$(cat "$builddir/image-id")
+    rm -r -- "$builddir"
+  fi
+  printf -v repository '%s/dify-offline/image-%03d' "$REGISTRY" "$i"
+  podman --cgroup-manager=cgroupfs push --authfile "$STATE/auth.json" --cert-dir "$STATE/podman-certs" \
+    --digestfile "$STATE/push-digest" "$push_id" "docker://$repository:bundle"
+  target_digest=$(cat "$STATE/push-digest")
+  [[ "$target_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+  jq --arg source "$source" --arg target "$repository@$target_digest" '. + {($source):$target}' \
+    "$STATE/image-map.json" > "$STATE/image-map.json.next"
+  mv "$STATE/image-map.json.next" "$STATE/image-map.json"
+  printf '已导入 %s/%s：%s\n' "$((i+1))" "$COUNT" "$source"
+done
+test "$(jq 'length' "$STATE/image-map.json")" = "$COUNT"
+```
+
+此循环只处理本节的load/build/push和映射，出错即停；保留已有Registry数据。导入未完成时不能进入部署。若重做本节，所有镜像重新验证/push，临时映射重新生成，不重新生成CA或密码。
+
+## 7. 配置节点CA、namespace和Secret
+
+### 7.1 合并节点信任
+
+不能覆盖客户已有CA ConfigMap。先读引用名，存在则merge一个键，不存在引用才创建专用ConfigMap；image config更新带resourceVersion检查。端口在ConfigMap键中写作`..5000`，不是`:5000`。
+
+```bash
+oc --context "$CTX" get image.config.openshift.io cluster -o json > "$WORK/image-config.json"
+TRUST_CM=$(jq -r '.spec.additionalTrustedCA.name // ""' "$WORK/image-config.json")
+if [[ -z "$TRUST_CM" ]]; then TRUST_CM=dify-offline-registry-cas; fi
+oc --context "$CTX" -n openshift-config get cm "$TRUST_CM" --ignore-not-found -o json > "$WORK/trust-existing.json"
+jq -n --arg key "${REGISTRY//:/..}" --rawfile ca "$STATE/certificates/ca.crt" \
+  '{data:{($key):$ca}}' > "$WORK/ca-patch.json"
+if [[ -s "$WORK/trust-existing.json" ]]; then
+  oc --context "$CTX" -n openshift-config patch cm "$TRUST_CM" --type=merge --patch-file "$WORK/ca-patch.json"
+else
+  oc --context "$CTX" -n openshift-config create configmap "$TRUST_CM" \
+    --from-file="${REGISTRY//:/..}=$STATE/certificates/ca.crt"
+fi
+jq --arg name "$TRUST_CM" '[
+  {op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+  {op:"add",path:"/spec/additionalTrustedCA",value:{name:$name}}]' \
+  "$WORK/image-config.json" > "$WORK/image-patch.json"
+oc --context "$CTX" patch image.config.openshift.io cluster --type=json --patch-file "$WORK/image-patch.json"
+oc --context "$CTX" get machineconfigpools
+oc --context "$CTX" create namespace dify
+```
+
+等待节点配置收敛并通过实际拉取检查，不能只看ConfigMap成功。这里需要集群管理员权限。仅有namespace admin不足以安装本篇的CA、CRD、SCC。
+
+### 7.2 创建目标认证与稳定应用密钥
+
+下面的create操作用于新namespace；已有同名Secret时先停止核对，不用覆盖或随机轮换来“修复”。
+
+```bash
+oc --context "$CTX" -n dify create secret generic offline-registry-pull \
+  --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson="$STATE/auth.json"
+oc --context "$CTX" -n dify create secret generic image-repo-secret \
+  --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson="$STATE/auth.json" --from-file=config.json="$STATE/auth.json"
+oc --context "$CTX" -n dify create secret generic offline-registry-ca --from-file=ca.crt="$STATE/certificates/ca.crt"
+for key in appSecretKey innerApiKey dashboardSecretKey; do
+  openssl rand -hex 28 | tr -d '\n' > "$WORK/keys/$key"
+done
+oc --context "$CTX" -n dify create secret generic dify-offline-keys \
+  --from-file=appSecretKey="$WORK/keys/appSecretKey" --from-file=innerApiKey="$WORK/keys/innerApiKey" \
+  --from-file=dashboardSecretKey="$WORK/keys/dashboardSecretKey"
+jq -j '.accessKey' "$STATE/local-s3.json" > "$WORK/keys/s3-access-value"
+jq -j '.secretKey' "$STATE/local-s3.json" > "$WORK/keys/s3-secret-value"
+oc --context "$CTX" -n dify create secret generic dify-local-s3 \
+  --from-file=accessKey="$WORK/keys/s3-access-value" --from-file=secretKey="$WORK/keys/s3-secret-value"
+```
+
+`image-repo-secret`需要两个键，不能只创建`.dockerconfigjson`。三组应用密钥稳定保存，不能在有业务数据后重新生成。S3 Secret必须与主机相同，否则服务虽然启动，应用也无法访问对象。
+
+## 8. 生成并安装依赖资源
+
+子Chart读取顶层`postgresql/redis/...`，而bundle配置将它们放在`components`下，不能直接`-f config.yaml`。以下逐组生成values、渲染、转换，再apply；处理文件全部在WORK。
+
+```bash
+install -d -m 0700 "$WORK/dependencies"
+COMPONENTS="$BUNDLE/source/examples/helm/components"
+for pair in prereqs:dify-prereqs pluginCrds:plugin-crds postgresql:postgresql redis:redis qdrant:qdrant; do
+  field=${pair%%:*}
+  chart=${pair#*:}
+  if [[ "$field" == pluginCrds ]]; then
+    printf '{"plugin_controller":{"installCrd":true}}\n' > "$WORK/dependencies/$chart-values.json"
+  else
+    jq --arg field "$field" '
+      {($field):(.components[$field] + {namespace:"dify",serviceAccountName:.components.prereqs.serviceAccountName})}
+      | if $field == "prereqs" then .prereqs *= {
+          minioCredentials:false,userAccess:{enabled:false},imageRepoSecret:{enabled:false},
+          imageBuilder:{enabled:false},monitoring:{enabled:false,dashboard:{enabled:false},alerts:{enabled:false}}}
+        else . end' "$WORK/config.json" > "$WORK/dependencies/$chart-values.json"
+  fi
+  helm template dify "$COMPONENTS/$chart" -n dify -f "$WORK/dependencies/$chart-values.json" \
+    --api-versions route.openshift.io/v1 --api-versions security.openshift.io/v1 > "$WORK/dependencies/$chart-raw.yaml"
+  yq -o=json '.' "$WORK/dependencies/$chart-raw.yaml" |
+    jq 'select(type=="object")' |
+    jq --slurpfile image_map "$STATE/image-map.json" -f "$SOURCE/docs/manual-offline/map-images.jq" |
+    jq -s '{apiVersion:"v1",kind:"List",items:.}' > "$WORK/dependencies/$chart.json"
+  jq '.items |= map(select(.kind!="Job"))' "$WORK/dependencies/$chart.json" > "$WORK/dependencies/$chart-main.json"
+  oc --context "$CTX" apply -f "$WORK/dependencies/$chart-main.json"
+  if [[ "$chart" == dify-prereqs ]]; then
+    jq '.items |= map(select(.kind=="Job"))' "$WORK/dependencies/$chart.json" > "$WORK/dependencies/$chart-jobs.json"
+    oc --context "$CTX" apply -f "$WORK/dependencies/$chart-jobs.json"
+    oc --context "$CTX" -n dify wait job/dify-generate-secrets --for=condition=complete --timeout=600s
+  elif [[ "$chart" == plugin-crds ]]; then
+    oc --context "$CTX" wait crd/difyplugins.enterprise.dify.ai --for=condition=Established --timeout=120s
+  else
+    oc --context "$CTX" -n dify rollout status "statefulset/dify-$chart" --timeout=600s
+  fi
+done
+oc --context "$CTX" -n dify get pvc
+```
+
+prereqs先建SA/RBAC再执行凭证Job，Job生成`dify-postgresql`（database/username/password）、`dify-redis`（password）、`dify-qdrant`（apiKey）。PostgreSQL启动脚本确保四个库`dify/enterprise/audit/dify_plugin_daemon`存在，不能依赖旧注释所说的“插件库自动创建”。PG fsGroup=26、Redis fsGroup=1001不能随意删除。PVC默认30/5/30Gi，SC以配置为准；WaitForFirstConsumer允许Pod调度后绑定。
+
+权限包含anyuid基线、自定义sandbox SCC（SYS_CHROOT等，非privileged容器）、plugin connector的nonroot SCC，以及插件CRD/RBAC。不能为解决Pending而将namespace全体改为privileged。vendor Chart自己的权限还需在第10节一并检查。
+
+## 9. 生成真正的离线vendor values
+
+先渲染本地Dify child，只取它生成的values数据，不apply其在线Application或ConfigMap。然后叠加vendor defaults、本地TLS/S3/Registry和稳定密钥。
+
+```bash
+jq '{dify:(.components.dify + {namespace:"dify",serviceAccountName:.components.prereqs.serviceAccountName,chart:{enabled:false}}),
+  deployer:.deployer,litemaas:{apiUrl:"",apiKey:"",model:""},objectStorage:.components.objectStorage}' \
+  "$WORK/config.json" > "$WORK/dify-child-values.json"
+helm template dify "$COMPONENTS/dify" -n dify -f "$WORK/dify-child-values.json" \
+  --api-versions route.openshift.io/v1 --api-versions security.openshift.io/v1 > "$WORK/dify-child.yaml"
+yq -o=json '.' "$WORK/dify-child.yaml" | jq -s -r \
+  '[.[] | select(.kind=="ConfigMap" and .metadata.name=="dify-values")][0].data["dify-values.yaml"]' \
+  > "$WORK/vendor-base.yaml"
+helm show values "$BUNDLE/dify-enterprise.tgz" > "$WORK/vendor-defaults.yaml"
+yq -o=json '.' "$WORK/vendor-defaults.yaml" > "$WORK/vendor-defaults.json"
+yq -o=json '.' "$WORK/vendor-base.yaml" > "$WORK/vendor-base.json"
+jq -r '.plugin_connector.generatorConf' "$WORK/vendor-defaults.json" | yq -o=json '.' > "$WORK/generator.json"
+jq --arg mirror "$PIP_URL" '.generator.python.pipMirror=$mirror' "$WORK/generator.json" | yq -P '.' > "$WORK/generator.yaml"
+jq -s '.[0] * .[1]' "$WORK/vendor-defaults.json" "$WORK/vendor-base.json" > "$WORK/vendor-merged.json"
+jq --arg registry "$REGISTRY" --arg endpoint "https://$HOST:$S3_PORT" --arg bucket "$BUCKET" \
+  --rawfile generator "$WORK/generator.yaml" --slurpfile cfg "$WORK/config.json" '
+  . * {global:{appSecretKey:"@@secret:dify-offline-keys/appSecretKey@@",innerApiKey:"@@secret:dify-offline-keys/innerApiKey@@",
+      customCA:{enabled:true,existingSecret:"offline-registry-ca"}},
+    enterprise:{appSecretKey:"@@secret:dify-offline-keys/dashboardSecretKey@@"},imagePullSecrets:[{name:"offline-registry-pull"}],
+    plugin_connector:{imageRepoPrefix:($registry+"/plugins"),imageRepoType:"docker",insecureImageRepo:false,generatorConf:$generator},
+    persistence:{type:"s3",s3:{endpoint:$endpoint,accessKey:"@@secret:dify-local-s3/accessKey@@",
+      secretKey:"@@secret:dify-local-s3/secretKey@@",bucketName:$bucket,region:"us-east-1",addressType:"",useAwsManagedIam:false,useAwsS3:false}}}
+  * ($cfg[0].offline.chartValues // {})' "$WORK/vendor-merged.json" > "$WORK/vendor-offline.json"
+jq -e '.global.marketplace.enabled==false and .ingress.enabled==false and .global.openshift.enabled==true' \
+  "$WORK/vendor-offline.json" >/dev/null
+oc --context "$CTX" -n dify get secrets -o json > "$WORK/secrets.json"
+jq --slurpfile secrets "$WORK/secrets.json" -f "$SOURCE/docs/manual-offline/resolve-values.jq" \
+  "$WORK/vendor-offline.json" |
+  jq --slurpfile image_map "$STATE/image-map.json" -f "$SOURCE/docs/manual-offline/map-images.jq" > "$WORK/vendor-values.json"
+chmod 0600 "$WORK"/*.json "$WORK"/*.yaml
+```
+
+`@@secret:name/key@@`不是Helm能识别的语法。过滤文件从已读取的Secret JSON解析对应字段，不在shell中插入密码，也不使用未经转义的sed替换。values JSON本身是Helm支持的YAML输入，密码中的引号和换行会被正确编码。
+
+这里先映射generatorConf、shader/gateway/busyBox/awsCli等运行时引用，再渲染vendor Chart，让生成Secret的checksum与内容匹配。仅修改Deployment image会漏掉动态创建的插件Pod。
+
+## 10. 生成派生Chart并手工安装
+
+渲染后处理：完整镜像引用替换、Secret中可解码文本的映射、所有Pod模板/SA拉取Secret，以及plugin-daemon OTLP HTTP端口修正。二进制Secret保持不变。不能直接对整个渲染结果`oc apply`代替Helm hooks，也不能将包含`{{...}}`的配置文本重新作为Helm表达式求值。
+
+```bash
+helm template dify "$BUNDLE/dify-enterprise.tgz" -n dify -f "$WORK/vendor-values.json" \
+  --api-versions route.openshift.io/v1 --api-versions security.openshift.io/v1 > "$WORK/vendor-raw.yaml"
+yq -o=json '.' "$WORK/vendor-raw.yaml" | jq 'select(type=="object")' |
+  jq --slurpfile image_map "$STATE/image-map.json" -f "$SOURCE/docs/manual-offline/map-images.jq" |
+  jq -s '.' > "$WORK/vendor-resources.json"
+CHART="$WORK/offline-chart"
+install -d -m 0700 "$CHART/templates"
+helm show chart "$BUNDLE/dify-enterprise.tgz" | yq -o=json '.' | jq 'del(.dependencies)' > "$CHART/Chart.yaml"
+N=$(jq 'length' "$WORK/vendor-resources.json")
+for ((i=0; i<N; i++)); do
+  printf -v filename '%04d.yaml' "$i"
+  jq --argjson i "$i" '.[$i]' "$WORK/vendor-resources.json" > "$WORK/resource.json"
+  encoded=$(base64 < "$WORK/resource.json" | tr -d '\n')
+  printf '{{ "%s" | b64dec }}\n' "$encoded" > "$CHART/templates/$filename"
+done
+helm template dify "$CHART" -n dify > "$WORK/final-render.yaml"
+yq -o=json '.' "$WORK/final-render.yaml" | jq -s \
+  '[.[] | select(type=="object") | {kind, name:.metadata.name, hook:.metadata.annotations["helm.sh/hook"]}]' \
+  > "$WORK/resource-summary.json"
+cat "$WORK/resource-summary.json"
+jq '[.[] | select(.kind | test("^(SecurityContextConstraints|Role|RoleBinding|ClusterRole|ClusterRoleBinding)$"))]' \
+  "$WORK/vendor-resources.json" > "$WORK/vendor-permissions.json"
+cat "$WORK/vendor-permissions.json"
+helm install dify "$CHART" --kubeconfig "$KUBECONFIG" --kube-context "$CTX" -n dify --wait --timeout 15m
+```
+
+审核summary后再执行最后一行：资源数非零，hooks保留，完整权限对象符合客户要求。prereqs关闭privileged开关并不保证vendor Chart自己没有渲染相关RoleBinding；特别核对sandbox的授权，不能仅根据已运行Pod的SCC判断不存在额外授权。依赖组由oc管理，vendor由Helm管理。初装不使用`--reuse-values`；升级和接管不在本篇范围，也不以`--force`作通用修复。
+
+每个最终资源作为base64字面量放入模板，仅解码输出，因此配置里的花括号不会被二次解释，hook annotations也保留。这个派生Chart**包含解析后的敏感资源**，只能保留在0700/0600私有目录，不加入公开介质或Git。
+
+## 11. 检查Pod、镜像、数据库与Redis
+
+```bash
+oc --context "$CTX" -n dify get pods
+oc --context "$CTX" -n dify wait pods --field-selector=status.phase!=Succeeded,status.phase!=Failed \
   --for=condition=Ready --timeout=600s
-oc --context "$DIFY_CONTEXT" exec dify-postgresql-0 -n dify -- bash -ec \
-  'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRESQL_USER" -d postgres -Atc "SELECT datname FROM pg_database"'
-oc --context "$DIFY_CONTEXT" exec dify-redis-0 -n dify -- sh -ec \
+oc --context "$CTX" -n dify get pods -o json > "$WORK/pods.json"
+jq -e --arg prefix "$REGISTRY/" '(.items|length)>0 and all(.items[];
+  (.metadata.deletionTimestamp == null) and
+  (.status.phase=="Succeeded" or (.status.phase=="Running" and any(.status.conditions[]?;.type=="Ready" and .status=="True"))) and
+  all((.spec.containers + (.spec.initContainers // []))[];
+    (.image|startswith($prefix)) and (.image|test("@sha256:[a-f0-9]{64}$"))))' "$WORK/pods.json" >/dev/null
+oc --context "$CTX" -n dify get pvc
+oc --context "$CTX" -n dify exec dify-postgresql-0 -- bash -ec \
+  'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRESQL_USER" -d postgres -Atc "SELECT datname FROM pg_database"' \
+  > "$WORK/databases.txt"
+for database in dify enterprise audit dify_plugin_daemon; do
+  grep -Fx "$database" "$WORK/databases.txt"
+done
+oc --context "$CTX" -n dify exec dify-redis-0 -- sh -ec \
   'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping'
-oc --context "$DIFY_CONTEXT" get routes -n dify
 ```
 
-等待命令过滤 Completed/Failed Job 只是避免把已结束 Job 当作 Ready Pod；最终还必须独立拒绝 Failed/Terminating/unready 工作负载，检查所有 Pod 的主/初始化容器引用都为目标 Registry digest。核对 `dify`、`enterprise`、`audit`、`dify_plugin_daemon` 四个库及 Redis PONG；只看到 Pod Running 不算应用验收。
+四库均存在、Redis输出PONG、PVC Bound、全部非已完成Pod Ready，主/初始化镜像全部内网digest。Completed生成凭证Job不是错误，Failed/Terminating Pod不能忽略。短暂启动重启需观察恢复，不只看一张截图。
 
-S3 验收必须从**集群内**创建临时 Job，使用已映射的 AWS CLI digest、ServiceAccount dify、offline-registry-pull、offline-registry-ca 和 dify-local-s3；用 Pod UID 唯一对象名，执行认证 head-bucket/put/get/内容及长度比对/delete。限时 180 秒、成功或失败都清理自己的对象/Job/Pod，删除 Job 使用 UID 前提。不向客户手册写共享固定测试对象名，也不把 Podman 主机 curl 当作 Pod 网络读写证据。可据 `install/check-s3.yml` 制作第 6 节手工探针，缺少 cmp 时仍需内容与长度双重检查。
+## 12. 从集群内验证认证TLS S3
 
-HTTPS 使用主机系统 CA、router CA及客户补充 Route CA 验证，不用 `-k`；至少一个 200 且各入口无 5xx。当前现场 App、Console 的 `/apps`、Enterprise/Upload/API 根路径为 200，Trigger 根路径 404；后者不证明触发功能已验证。浏览器如何经内网/Jump访问、Chrome 启动和证书信任，完整步骤见 [Quick Start 第 5.2 节](customer-quickstart.md#52-从浏览器访问离线-dify-console)。
+主机curl不能代替集群Pod的S3读写。下面创建限时Job，使用与Dify相同的CA/Secret和内网AWS CLI镜像；对象名使用Pod UID，成功或失败清理自己的对象。
 
-### 11.2 常见问题与操作顺序
+```bash
+AWS_IMAGE=$(jq -er '.["amazon/aws-cli:latest"]' "$STATE/image-map.json")
+jq -n --arg image "$AWS_IMAGE" --arg endpoint "https://$HOST:$S3_PORT" --arg bucket "$BUCKET" \
+  --rawfile command "$SOURCE/docs/manual-offline/s3-probe.sh" '{
+  apiVersion:"batch/v1",kind:"Job",metadata:{generateName:"dify-manual-s3-check-",namespace:"dify"},
+  spec:{backoffLimit:0,activeDeadlineSeconds:180,ttlSecondsAfterFinished:600,template:{spec:{
+    serviceAccountName:"dify",restartPolicy:"Never",imagePullSecrets:[{name:"offline-registry-pull"}],
+    containers:[{name:"s3",image:$image,command:["/bin/sh","-ec",$command],env:[
+      {name:"POD_UID",valueFrom:{fieldRef:{fieldPath:"metadata.uid"}}},
+      {name:"ENDPOINT",value:$endpoint},{name:"BUCKET",value:$bucket},
+      {name:"AWS_CA_BUNDLE",value:"/ca/ca.crt"},{name:"AWS_EC2_METADATA_DISABLED",value:"true"},
+      {name:"AWS_ACCESS_KEY_ID",valueFrom:{secretKeyRef:{name:"dify-local-s3",key:"accessKey"}}},
+      {name:"AWS_SECRET_ACCESS_KEY",valueFrom:{secretKeyRef:{name:"dify-local-s3",key:"secretKey"}}}],
+      volumeMounts:[{name:"ca",mountPath:"/ca",readOnly:true}],
+      resources:{requests:{cpu:"10m",memory:"64Mi"},limits:{memory:"256Mi"}}}],
+    volumes:[{name:"ca",secret:{secretName:"offline-registry-ca"}}]}}}}' > "$WORK/s3-job.json"
+oc --context "$CTX" create -f "$WORK/s3-job.json" -o json > "$WORK/s3-created.json"
+JOB=$(jq -r '.metadata.name' "$WORK/s3-created.json")
+(
+  set +e
+  oc --context "$CTX" -n dify wait "job/$JOB" --for=condition=complete --timeout=180s
+  result=$?
+  oc --context "$CTX" -n dify get pods -l "job-name=$JOB" -o json > "$WORK/s3-pods.json"
+  jq '{apiVersion:"v1",kind:"DeleteOptions",propagationPolicy:"Foreground",preconditions:{uid:.metadata.uid}}' \
+    "$WORK/s3-created.json" > "$WORK/s3-delete.json"
+  oc --context "$CTX" delete --raw "/apis/batch/v1/namespaces/dify/jobs/$JOB" -f "$WORK/s3-delete.json"
+  deleted=$?
+  oc --context "$CTX" -n dify wait "job/$JOB" --for=delete --timeout=120s
+  gone=$?
+  test "$result" -eq 0 && test "$deleted" -eq 0 && test "$gone" -eq 0
+)
+```
 
-| 现象 | 先查哪里；不要怎样修 |
+Job完成意味着head-bucket、put/get、内容与长度比较、delete均成功；缺少cmp的AWS CLI镜像也可执行。若失败先记录错误和Job/Pod事件；不要删除业务bucket或用共享固定key测试。若Pod被强制终止，EXIT trap不能保证执行；用保留的`s3-pods.json`中Pod UID核对`offline-acceptance/UID`对象后清理本次对象。Secret值不要粘贴到故障报告。
+
+## 13. HTTPS、浏览器和开机服务
+
+### 13.1 验证Route证书和HTTP
+
+系统CA加集群router CA；若客户Route使用另外的私有CA，将其PEM证书一并加入`route-ca.pem`。这是Route CA，不是第4节Podman CA。
+
+```bash
+cat /etc/pki/tls/certs/ca-bundle.crt > "$WORK/route-ca.pem"
+oc --context "$CTX" -n openshift-ingress-operator get secret router-ca --ignore-not-found -o json > "$WORK/router-ca.json"
+if [[ -s "$WORK/router-ca.json" ]]; then
+  jq -r '.data["tls.crt"] // ""' "$WORK/router-ca.json" | base64 -d >> "$WORK/route-ca.pem"
+fi
+oc --context "$CTX" -n dify get routes
+curl --noproxy '*' --cacert "$WORK/route-ca.pem" --fail "https://dify-console.$APPS/apps" -o /dev/null
+for name in dify-app dify-console dify-enterprise dify-upload dify-api dify-trigger; do
+  path=/
+  if [[ "$name" == dify-app || "$name" == dify-console ]]; then path=/apps; fi
+  curl --noproxy '*' --cacert "$WORK/route-ca.pem" -sS -o /dev/null \
+    -w "$name HTTP %{http_code}\n" "https://$name.$APPS$path"
+done
+```
+
+Console/App/Enterprise/Upload/API现场返回200；Trigger根路径可为404，这不证明触发业务已验证。浏览器、Jump SOCKS、Chrome及CA信任按 [Quick Start 第5.2节](customer-quickstart.md#52-从浏览器访问离线-dify-console)配置；不要将URL改成Jump IP或关闭TLS校验。License、登录、文件上传、插件构建/调用、模型和RAG继续实际操作测试。
+
+### 13.2 安装systemd单元
+
+`--restart=unless-stopped`不替代挂载与启动顺序。先为本手工实例创建独立单元，路径取当前WORK/STATE/BUNDLE，不冒充Ansible管理。
+
+```bash
+test ! -e /etc/systemd/system/dify-offline-services.service
+cat > "$WORK/dify-offline-services.service" <<UNIT
+# Managed by Dify manual installation
+[Unit]
+Description=Dify manual offline services
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=$STATE $BUNDLE
+ConditionPathExists=$BUNDLE/images.lock.yaml
+ConditionPathExists=$STATE/auth.json
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0077
+ExecStart=/usr/bin/podman --cgroup-manager=cgroupfs start dify-offline-s3 dify-offline-registry dify-offline-pypi
+ExecStop=/usr/bin/podman --cgroup-manager=cgroupfs stop --ignore --time=30 dify-offline-pypi dify-offline-registry dify-offline-s3
+TimeoutStartSec=180
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemd-analyze verify "$WORK/dify-offline-services.service"
+install -m 0644 "$WORK/dify-offline-services.service" /etc/systemd/system/dify-offline-services.service
+systemctl daemon-reload
+systemctl enable --now dify-offline-services.service
+systemctl status dify-offline-services.service --no-pager
+```
+
+重启验证需在维护窗口另做：检查挂载、三个容器、节点拉取、全部Pod、DB/Redis/S3/Route。数据库、S3、稳定密钥、CA、Registry认证与映射都要备份；只备份镜像或Helm values不能恢复业务。
+
+## 14. 出错后从哪里继续
+
+| 失败点 | 处理 |
 |---|---|
-| API i/o timeout | 集群/节点是否启动、DNS、NLB/路由；RHDP 曾是 SNO EC2 stopped，不要先改 kubeconfig 或重新安装 |
-| ImagePullBackOff / x509 / unauthorized | 精确镜像引用、节点 CA、SA/template 拉取 Secret、Registry 网络/认证；不关闭 TLS |
-| Pod 启动但插件构建联网或失败 | generatorConf、编码 Secret、所有 build-base/辅助镜像、本地 wheels ABI/依赖闭包与构建 CA |
-| PostgreSQL验收报 extra command-line argument | 使用上面的单一 SQL 参数；旧自动包曾保留反斜杠引号，修复是验收代码，不是重建数据库 |
-| Secret/密码不一致 | 对照 retained state、集群 Secret 和实际服务；不轮换一半、不重跑随机生成覆盖已有值 |
-| PVC Pending/容器不可写 | SC、WFFC、调度/容量、fsGroup/SCC；不为解决权限直接给 privileged |
-| Pod 全 Ready 但功能失败 | 存储 endpoint、vectorDB 嵌套、License、provider、插件/runtime，继续业务验收 |
-| 本机 ERR_INTERNET_DISCONNECTED | 先检查同一 SOCKS curl；使用已验证 Chrome 简化参数及新实验目录，不直接重装 Dify |
-| 旧包文档或任务未更新 | GitHub 合并不会修改已封存包；参考 Quick Start 修复源码复验，不修改 bundle/checksums |
+| 介质/OCI校验失败 | 停止并核对可信交付，不改checksums或lock；重新提供完整介质 |
+| 主机服务失败 | 查`podman logs`、挂载/SELinux、证书SAN/期限、nginx配置；保留原凭证，不重复create覆盖 |
+| 导入中断 | 保留Registry和CA，重新执行第6节；完成全部映射后再部署 |
+| 节点镜像拉取失败 | 查DNS、5000端口、节点CA、imagePullSecrets和映射，不设置insecure |
+| 依赖Job失败 | 查SA/RBAC及镜像；已有Job不直接apply更新immutable字段，确认已结束且属于本次安装后再处理 |
+| Helm安装失败 | 查release/hooks/Pod events，保留私有values和Chart作诊断；先定位，不盲目force或重建PVC |
+| DB/Redis失败 | 核对实际Secret和数据库初始化；不通过轮换部分密码修复 |
+| 插件动态拉取公网 | 检查generatorConf和编码Secret里的所有镜像、pipMirror及依赖闭包；Pod现有image检查不够 |
+| 本机浏览器失败 | 先按同一SOCKS路径curl，再查Chrome实验目录/代理/Route证书，不重装Dify |
 
-### 11.3 平台与业务必须分开签字
+本稿是初装顺序，不保证从任意步骤盲目整篇重跑。WORK保存本次私有材料；`vendor-values.json`、`secrets.json`、raw/final资源及派生Chart均含敏感信息，限制访问并按客户策略归档/清理，不发GitHub。Secret或PKI变更必须协调服务与应用，不以重跑随机生成步骤代替轮换。
 
-`deployment-ready.json` 由自动验收写入，权限 0600，scope 是 deployment acceptance only；手工操作不应伪造同名标记冒充 Role 已运行。手工验证另存自己的日期、执行人、客户/集群身份、包/Chart/lock摘要、步骤结果、资源清单与脱敏证据，按 [验收清单](disconnected-validation.md)逐项签字。
+手工安装没有自动安装器完整的binding/租约/归属元数据，不能假定自动reset能接管它。清理前盘点namespace/PVC/PV reclaimPolicy、S3和Registry数据、三个容器/单元与共享挂载，确认数据损失范围；共享CRD/SCC/CA配置不默认删除，不强制清namespace finalizer。现有自动清理机制供 [设计参考](disconnected-reset.md)，不是授权无条件删除手工环境。
 
-另验：离线 License 的合法取得/激活/续期；登录与初始化；文件上传/下载；模型提供方；`.difypkg` 导入、离线构建和调用；embedding 维度与实际索引/检索；RAG 引用；触发器；公网请求依赖和观测。在线演示的 SSO/模型/日志/追踪成果不能填入本次离线验收结果。
+## 15. 源码核对与当前验证范围
 
-## 12. 运维、备份、重跑与清理
-
-本机服务需要专用 systemd 单元 `dify-offline-services.service`：依赖 network-online 和介质/状态挂载，检查 lock/auth 存在，按 S3→Registry→nginx 启动，按相反顺序停止；`Type=oneshot`、RemainAfterExit、UMask 0077、超时与失败重试。参考 [单元模板](../ansible/templates/dify-offline-services.service.j2)，手工版本须填实际路径并通过 `systemd-analyze verify`，不让客户原样安装带 Jinja 变量的模板，也不伪称由 Ansible 管理。
-
-`podman --restart=unless-stopped` 不能替代本工程的挂载依赖/启动顺序设计。主机重启后先确认数据盘、服务和 TLS，再检查节点拉取、Pod、数据库、S3和Route；不要直接声明“重启后自动恢复已通过”，当前原生重启全流程尚无新现场记录。
-
-备份至少覆盖：数据库/PVC、S3数据（含租户相关私钥/文件）、Registry数据或可重导入介质、所有稳定应用密钥、Registry/S3凭证、服务CA/私钥、配置/映射/版本/归属记录。数据库与对象数据应有一致性策略，保留恢复演练证据。只备份 Helm values 或只保存镜像无法恢复业务。
-
-当前自动清理 application 会删除 namespace/PVC/业务数据并清本地S3，full 进一步删除三个容器、单元和Registry数据；保留CA/凭证、介质、共享集群资源和镜像缓存。它有完整归属/PV回收策略/目录挂载/UID计划确认保护，不能压缩成无条件 `oc delete project dify` 和 `rm -rf`。
-
-手工安装没有自动生成的完整 binding/lease/归属状态，因此不能假定能直接使用自动 reset 接管清理。手工删除也必须先盘点 Chart/UID/ownerReferences、Endpoints/Lease、PVC/PV reclaimPolicy、宿主挂载共享情况并确认数据损失范围；共享 CRD/SCC/CA ConfigMap 不默认删除，不强制移除 namespace finalizer。删除/恢复步骤须独立评审并演练。
-
-## 13. 源码对照索引
-
-以仓库当前提交为阅读基线；实际交付时记录完整提交 SHA，不把会变化的 main 当作永久证据。
-
-| 主题 | 可直接审阅的实现 |
+| 本文操作 | 原生实现参考 |
 |---|---|
-| 参数/合并/平台/配置边界 | [customer-defaults.yml](../ansible/customer-defaults.yml)、[prepare/preflight.yml](../ansible/roles/dify_offline/tasks/prepare/preflight.yml)、[validate-config.yml](../ansible/roles/dify_offline/tasks/validate-config.yml) |
-| 源授权/工具/镜像/插件/封包 | [prepare/](../ansible/roles/dify_offline/tasks/prepare/)、[verify.yml](../ansible/roles/dify_offline/tasks/verify.yml) |
-| 身份/服务/单元 | [service-identity.yml](../ansible/roles/dify_offline/tasks/install/service-identity.yml)、[service-create.yml](../ansible/roles/dify_offline/tasks/install/service-create.yml)、[service-autostart.yml](../ansible/roles/dify_offline/tasks/install/service-autostart.yml) |
-| load/CA派生/push | [import.yml](../ansible/roles/dify_offline/tasks/install/import.yml)、[import-image.yml](../ansible/roles/dify_offline/tasks/install/import-image.yml) |
-| 集群信任和稳定 Secret | [cluster-identity.yml](../ansible/roles/dify_offline/tasks/install/cluster-identity.yml)、[stable-secret.yml](../ansible/roles/dify_offline/tasks/install/stable-secret.yml) |
-| 子 Chart 与默认 values | [render.yml](../ansible/roles/dify_offline/tasks/render.yml)、[render-child.yml](../ansible/roles/dify_offline/tasks/render-child.yml)、[components/](../examples/helm/components/) |
-| 资源/编码内容/运行时镜像 | [transform-resource.yml](../ansible/roles/dify_offline/tasks/transform-resource.yml)、[map-text.yml](../ansible/roles/dify_offline/tasks/map-text.yml)、[resolve-values.yml](../ansible/roles/dify_offline/tasks/install/resolve-values.yml) |
-| vendor Chart/hooks | [vendor-chart.yml](../ansible/roles/dify_offline/tasks/install/vendor-chart.yml)、[vendor-resource.yml](../ansible/roles/dify_offline/tasks/install/vendor-resource.yml) |
-| 部署验收 | [check.yml](../ansible/roles/dify_offline/tasks/install/check.yml)、[check-s3.yml](../ansible/roles/dify_offline/tasks/install/check-s3.yml) |
-| 删除与重跑安全 | [reset/](../ansible/roles/dify_offline/tasks/reset/)、[bind.yml](../ansible/roles/dify_offline/tasks/bind.yml)、[paths.yml](../ansible/roles/dify_offline/tasks/paths.yml) |
+| 介质/OCI校验与镜像导出 | [verify.yml](../ansible/roles/dify_offline/tasks/verify.yml)、[export-image.yml](../ansible/roles/dify_offline/tasks/prepare/export-image.yml) |
+| 服务/CA/认证 | [service-identity.yml](../ansible/roles/dify_offline/tasks/install/service-identity.yml)、[service-create.yml](../ansible/roles/dify_offline/tasks/install/service-create.yml) |
+| load/build/push/映射 | [import-image.yml](../ansible/roles/dify_offline/tasks/install/import-image.yml) |
+| 集群CA/Secret | [cluster-identity.yml](../ansible/roles/dify_offline/tasks/install/cluster-identity.yml) |
+| 子Chart及vendor values | [render-child.yml](../ansible/roles/dify_offline/tasks/render-child.yml)、[render.yml](../ansible/roles/dify_offline/tasks/render.yml)、[resolve-values.yml](../ansible/roles/dify_offline/tasks/install/resolve-values.yml) |
+| 资源和编码Secret转换 | [transform-resource.yml](../ansible/roles/dify_offline/tasks/transform-resource.yml)、[map-images.jq](manual-offline/map-images.jq)、[resolve-values.jq](manual-offline/resolve-values.jq) |
+| 派生Chart/hooks | [vendor-chart.yml](../ansible/roles/dify_offline/tasks/install/vendor-chart.yml) |
+| S3与部署检查 | [check.yml](../ansible/roles/dify_offline/tasks/install/check.yml)、[check-s3.yml](../ansible/roles/dify_offline/tasks/install/check-s3.yml)、[探针命令](manual-offline/s3-probe.sh) |
 
-离线介质只带白名单内容，可能不含完整测试和 examples 的原位置；源码索引用于工程阅读，不是让客户在 bundle 内直接点击每个相对路径执行命令。手工资料封装时须同步文件位置和链接。
+过滤文件只接受输入JSON、输出JSON，不调用oc/Podman或安排安装阶段。镜像替换按完整引用边界，避免误替换其他仓库的同名镜像；可解码文本Secret重新编码，非文本保持原内容；保留hook annotations并补齐各种Pod模板的拉取Secret。plugin-daemon的OTLP_*配置只将对应collector后缀4317改为4318，不是修改所有组件端口。
 
-## 14. Dify 团队接收后应完成的工作
-
-| 接收方 | 发布手工手册前的完成条件 |
-|---|---|
-| Dify 研发/Chart 维护者 | 确认全部离线 values、Secret 接口、动态镜像、CA、hooks 和权限；决定用正式 Chart 原生能力还是审核后的离线派生 Chart，不省略转换 |
-| 介质/交付负责人 | 第 6 节手工产物齐全、版本/摘要/授权明确，无真实客户凭证；RPM、插件、模型、License 分开交付且来源清楚 |
-| 文档负责人 | 每条命令标主机/用户/目录/输入来源/预期结果/失败停止点；客户拓扑是正文、RHDP 是附录；无不存在目录或可误复制的占位命令 |
-| 平台/安全负责人 | 审核 SCC/RBAC、节点CA合并、端口、镜像授权和Secret暴露；vendor可能把凭证组合进ConfigMap，不能仅因使用Secret就声称秘密从不进入ConfigMap |
-| 测试负责人 | 全新目标从手工介质独立执行，不借助原已安装服务；验证失败恢复、并发/接管拒绝、重启、备份恢复和清理；保留完整过程和脱敏证据 |
-| Dify 产品/业务负责人 | 明确无 License 时行为，确认离线License、插件导入/构建、模型、上传/RAG/触发器等实际操作步骤 |
-
-当前证据：原生制包成功；29 镜像导入和16应用+3数据层Pod就绪；验收曾在PG SQL引号失败，修复源码定向复验 `ok=165 failed=0`；集群内认证TLS S3与HTTPS通过；用户确认Chrome页面加载。**这不是纯手工安装、修复版新介质一次全程通过、原生清理重装/重启、4.21/arm64/外部存储/HA或业务验收的证明。** 具体经过以 [现场记录](rhdp-dify-offline.md#2026-11-05客户原生入口现场验证) 为准。
-
-建议 Dify 同事交回三项成果：有版本号的客户手工手册、配套且可校验的手工交付材料，以及在全新环境按手册独立执行的验证报告。三者对应后，再把本移交稿中的“待补齐/待验证”改为正式支持声明。
+自动安装的RHDP 4.20.8现场证据见 [现场记录](rhdp-dify-offline.md#2026-11-05客户原生入口现场验证)。本文的手工数据过滤、values及Chart生成应经过本地回归；完整手工部署/重启/清理仍须在独立空白集群验证。4.21、arm64、外部S3/ODF、HA及License/插件/模型/RAG不由本篇默认配置的结果推导。在线历史移交中的账号、SSO、ArgoCD与模型环境不适用于本篇。
