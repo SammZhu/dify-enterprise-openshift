@@ -8,22 +8,24 @@
 
 ## Demo：在 Jump 上准备 Highside
 
-在 Jump 的完整工程 `ansible/` 目录执行，使用已有控制端与 `inventory.example.yml` 的 `highside` SSH 别名：
+先完成 [Quick Start 第 1.1～1.3 节](customer-quickstart.md#11-选择当前环境的路径)，在 Jump 的 `lab-user` shell 使用已设置的路径变量、现有控制端与 `inventory.example.yml` 的 `highside` SSH 别名：
 
 ```bash
-/mnt/low-side-data/ansible-venv/bin/ansible-playbook -i inventory.example.yml host-prerequisites.yml -e prerequisite_target=highside -e prerequisite_mode=repositories
+cd "$DIFY_SOURCE_DIR/ansible"
+"$DIFY_WORK_ROOT/dify-ansible/bin/ansible-playbook" -i inventory.example.yml host-prerequisites.yml -e prerequisite_target=highside -e prerequisite_mode=repositories
 ```
 
 `repositories` 模式访问目标机已经配置的 OS 软件源，不添加新源。Demo 若可访问其 RHUI 软件源，可用来完成 Quick Start 第 0 步；客户完全隔离环境应使用内网 OS 源或下面的本地 RPM 模式。不能把 Demo 的 RHUI 访问例外当作物理隔离验证。
 
-成功输出包含 `Python 3.12.x` 和对应 pip 版本。随后再在联网制作机执行 `customer-prepare.yml`；离线端安装 Ansible 时继续使用交付包的 `controller-wheels` 和 `--no-index`，无需在 Highside 联网下载 Ansible。
+成功标志为 `failed=0`，输出包含 `Python 3.12.x` 和对应 pip 版本。若尚未制包，继续 Quick Start 第 2 步；若介质已制好并搬运，直接继续第 3 步，不必重做介质。离线端安装 Ansible 时继续使用交付包的 `controller-wheels` 和 `--no-index`，无需在 Highside 联网下载 Ansible。
 
 ## 完全离线：由已有控制端安装目标上的 RPM 集
 
 由 OS 管理员准备与目标版本/架构匹配的可信 RPM 和依赖，搬到目标专用目录，例如 `/mnt/high-side-data/dify-os-rpms`。本 Playbook 不自动下载 RPM，也不自动导入未知签名公钥；目标需已有相应发行版的可信公钥。
 
 ```bash
-/mnt/low-side-data/ansible-venv/bin/ansible-playbook -i inventory.example.yml host-prerequisites.yml -e prerequisite_target=highside -e prerequisite_mode=local_rpms -e prerequisite_rpm_dir=/mnt/high-side-data/dify-os-rpms
+cd "$DIFY_SOURCE_DIR/ansible"
+"$DIFY_WORK_ROOT/dify-ansible/bin/ansible-playbook" -i inventory.example.yml host-prerequisites.yml -e prerequisite_target=highside -e prerequisite_mode=local_rpms -e prerequisite_rpm_dir=/mnt/high-side-data/dify-os-rpms
 ```
 
 客户使用自己的 inventory 和现成控制端，将 `prerequisite_target` 替换为其中的目标主机/组。目录路径是**受管目标机上的路径**，不是控制端上的目录。
