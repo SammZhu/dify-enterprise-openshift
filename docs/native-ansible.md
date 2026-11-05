@@ -1,6 +1,6 @@
 # 客户离线安装的原生 Ansible 实现
 
-面向 Dify 同事编写客户手工离线安装手册的架构、步骤对照、交付物和验证关卡见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（随完整源码提供，不是客户包内的现成手工安装入口）。
+面向 Dify 同事编写客户手工离线安装手册的架构及分步手工操作命令见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（操作稿与jq过滤文件随完整源码提供，使用已校验的离线bundle）。
 
 客户交付是主线：[Quick Start](customer-quickstart.md) 使用 `customer-prepare.yml`、`customer-install.yml` 和 `customer-reset.yml`。这三个入口直接执行 `ansible/roles/dify_offline/tasks/` 的 YAML 任务；不调用自定义 Python 模块、Python 全流程脚本或 Shell 安装器。
 

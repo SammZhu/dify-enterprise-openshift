@@ -222,10 +222,10 @@ oc get secret dify-postgresql -n dify -o jsonpath='{.data.password}' | base64 -d
 
 Choose the handover for the workflow being reviewed:
 
-- **[Offline engineering handover (Chinese)](docs/disconnected-handover.md):** architecture, media/state contracts, manual-install translation, Chart/image/Secret transformations, acceptance and the artifacts/independent validation still required before publishing a customer manual.
+- **[Offline engineering handover (Chinese)](docs/disconnected-handover.md):** an ordered manual CLI runbook from a verified offline bundle through Podman, image import, cluster credentials, local Chart generation and acceptance; includes the jq data filters used by the commands.
 - **[Historical online environment handover](docs/handover.md):** online GitOps access, integrations and findings. Its environment dates, accounts and ArgoCD operations do not apply to the offline customer workflow.
 
-The offline engineering handover is source-repository material, not a prebuilt customer manual-install kit. Customers running the supported automation should follow the [Quick Start](docs/customer-quickstart.md).
+The manual runbook and its public data filters are delivered with the full source repository; the sealed application bundle stays unchanged. Its local command/data tests do not replace a fresh manual installation field run. Customers running the supported automation should follow the [Quick Start](docs/customer-quickstart.md).
 
 
 This environment is shared with Dify engineers. They installed the product by
