@@ -490,10 +490,20 @@ cd "$DIFY_REPAIR_SOURCE_DIR/ansible"
 
 #### 方式 B：本机浏览器经 Jump 的 SOCKS5 隧道
 
-**运行位置：你自己的 Mac / Linux 终端，不是 Jump 或 Highside。** 需要本机已安装 OpenSSH 客户端，以及 Firefox 或下述 macOS Chrome。先从当前 Portal 的 **Jump Instance → SSH** 获取 Jump 公网 IP/DNS；交互输入时只填 IP 或 DNS，不填 `ssh`、用户名或密码：
+**运行位置：你自己的 Mac / Linux 终端，不是 Jump 或 Highside。** 需要本机已安装 OpenSSH 客户端，以及 Firefox 或下述 macOS Chrome。
+
+**先查 Jump 地址，再执行下面的命令：**
+
+1. 在 Demo Portal 打开本次申请的 **OpenShift Disconnected Workshop**，点击上方 **Info** 标签页（不是 Showroom 的 SSH Terminal）。
+2. 在 **Access Details** 区域找到 **2 - Jump Instance** 表格，查看其中 **SSH** 一行。
+3. 这一行显示连接命令：取 `ssh lab-user@` 后面的完整 IP 或 DNS。下面出现输入提示时，只输入这一部分，再按回车；不要粘贴整条 SSH 命令、`lab-user@` 或 Password 行。
+
+选择 **Jump Instance** 的地址，不选择 **High Side Instance** 的内网地址；`highside` 是 Jump 内部使用的 SSH 别名，也不是这里的输入值。环境重新申请后地址可能变化，每次以当前 Info 页为准，不沿用旧聊天或其他环境的地址。
+
+查到地址后，在本机终端执行：
 
 ```bash
-printf '请输入当前 Portal 的 Jump 公网 IP 或 DNS：'
+printf '请输入 Info 页 Jump Instance 的 SSH 行中 @ 后面的 IP 或 DNS：'
 read -r DIFY_JUMP_HOST
 ssh -N -D 127.0.0.1:1080 \
   -o ExitOnForwardFailure=yes \
@@ -548,10 +558,10 @@ openssl x509 -in "$HOME/dify-browser-access/route-ca.crt" -noout -fingerprint -s
 
 任一步失败先停止。记录上述 SHA256 指纹；不要把服务器叶子证书或来源不明的 CA 当作根证书导入。
 
-**在本机另开一个终端**（隧道终端继续保持运行），重新输入 Jump 地址，然后下载公开 CA 并核对指纹：
+**在本机另开一个终端**（隧道终端继续保持运行），按上面的 Portal 查找步骤重新输入同一个 Jump 地址，然后下载公开 CA 并核对指纹：
 
 ```bash
-printf '请输入当前 Portal 的 Jump 公网 IP 或 DNS：'
+printf '请输入 Info 页 Jump Instance 的 SSH 行中 @ 后面的 IP 或 DNS：'
 read -r DIFY_JUMP_HOST
 install -d -m 0700 "$HOME/dify-browser-access"
 scp "lab-user@${DIFY_JUMP_HOST}:dify-browser-access/route-ca.crt" \
