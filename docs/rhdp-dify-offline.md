@@ -4,7 +4,7 @@
 
 **2026-11-05 已使用客户原生入口在 RHDP 完成制包、部署及修复后的定向验收**，见下方现场记录。这不代表 `dify.yml` 适配入口、原生清理/重启恢复或修复版新介质的一次完整运行已验证。2026-11-02 的真实部署属于旧实现历史记录，范围见文末。License、插件、模型和 RAG 仍需单独验证。
 
-浏览器访问安装后的 Dify 见 [Quick Start 第 5.2 节](customer-quickstart.md#52-从浏览器访问离线-dify-console)：优先使用 Showroom Desktop 中的 Jump Firefox；本机浏览器可使用经 Jump 的 SSH SOCKS5 隧道，并配置代理 DNS 与 Route CA 信任。
+浏览器访问安装后的 Dify 见 [Quick Start 第 5.2 节](customer-quickstart.md#52-从浏览器访问离线-dify-console)：优先使用 Showroom Desktop 中的 Jump Firefox；本机 Firefox 或 macOS Chrome 可使用经 Jump 的 SSH SOCKS5 隧道，并配置代理 DNS 与 Route CA 信任；Chrome 使用独立实验目录，证书信任范围另行说明。
 
 ## 使用 Ansible
 

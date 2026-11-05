@@ -488,9 +488,9 @@ cd "$DIFY_REPAIR_SOURCE_DIR/ansible"
 
 这是 [Workshop Guide 第 5 章的浏览器访问方式](https://showroom-showroom-2c8jd.apps.cluster1.openshift.shared.redhatworkshops.io/content/modules/lab05.html#_log_in_to_the_openshift_web_console)：浏览器运行在 Jump，使用其内网 DNS 和网络路径，Guide 已配置实验集群 Web 证书信任。上述 Showroom 链接属于本次申请的环境；以后申请时必须从新环境 Portal 打开对应 Guide。此方式不需要在你本机配置代理；地址栏应保持真实 HTTPS 域名，不替换为 Jump IP 或 `localhost`。
 
-#### 方式 B：本机 Firefox 经 Jump 的 SOCKS5 隧道
+#### 方式 B：本机浏览器经 Jump 的 SOCKS5 隧道
 
-**运行位置：你自己的 Mac / Linux 终端，不是 Jump 或 Highside。** 需要本机已安装 OpenSSH 客户端和 Firefox。先从当前 Portal 的 **Jump Instance → SSH** 获取 Jump 公网 IP/DNS；交互输入时只填 IP 或 DNS，不填 `ssh`、用户名或密码：
+**运行位置：你自己的 Mac / Linux 终端，不是 Jump 或 Highside。** 需要本机已安装 OpenSSH 客户端，以及 Firefox 或下述 macOS Chrome。先从当前 Portal 的 **Jump Instance → SSH** 获取 Jump 公网 IP/DNS；交互输入时只填 IP 或 DNS，不填 `ssh`、用户名或密码：
 
 ```bash
 printf '请输入当前 Portal 的 Jump 公网 IP 或 DNS：'
@@ -503,7 +503,7 @@ ssh -N -D 127.0.0.1:1080 \
 
 按 SSH 提示使用当前环境凭证认证，不把密码写入命令或文件。首次连接须核对主机指纹；环境重建引起指纹变化时先核对目标，不关闭主机密钥检查。登录后前台没有 shell 提示符是正常现象，**保持这个终端打开**。本机 `127.0.0.1:1080` 只接收本机 SOCKS 请求，由 Jump 解析目标域名并连接内网服务。OpenSSH `-D` 的行为见 [官方手册](https://man.openbsd.org/ssh)。
 
-建议先通过 Firefox 的 `about:profiles` 新建并启动一个专用实验配置文件，再进入 **设置 → 常规 → 网络设置 → 设置 → 手动配置代理**，填写：
+**Firefox 用户：**建议先通过 Firefox 的 `about:profiles` 新建并启动一个专用实验配置文件，再进入 **设置 → 常规 → 网络设置 → 设置 → 手动配置代理**，填写：
 
 | 项目 | 填写值 |
 |---|---|
@@ -515,6 +515,21 @@ ssh -N -D 127.0.0.1:1080 \
 | 不使用代理的地址 / No proxy for | 本专用配置可保留 `localhost, 127.0.0.1`；不要加入 `.lab`、`disco.lab` 或 Console 域名 |
 
 代理设置见 [Firefox 官方说明](https://support.mozilla.org/en-US/kb/connection-settings-firefox)，SOCKS 版本与代理 DNS 的含义见 [Mozilla Proxy 配置说明](https://firefox-admin-docs.mozilla.org/reference/policies/proxy/)。必须让内网 DNS 经 SOCKS 代理解析，不能依赖本机公网 DNS。此设置只作用于该 Firefox 配置文件，不会自动让其他浏览器或 Codex 内置浏览器经过代理。保存后使用该 Firefox 打开上面的 Console 地址。
+
+**macOS Chrome 用户：**复用上面仍在运行的 SSH 隧道，跳过 Firefox 设置。在你自己的 Mac 另开一个终端执行以下命令，使用专用用户数据目录启动 Chrome：
+
+```bash
+install -d -m 0700 "$HOME/dify-browser-access"
+open -na "Google Chrome" --args \
+  --user-data-dir="$HOME/dify-browser-access/chrome-profile" \
+  --proxy-server="socks5://127.0.0.1:1080" \
+  --host-resolver-rules="MAP * ~NOTFOUND, EXCLUDE localhost" \
+  "https://dify-console.apps.disco.lab/apps"
+```
+
+`--user-data-dir` 将本次实验的代理参数、Cookie 和登录状态与日常 Chrome 分开；不使用日常 Chrome 的用户数据目录，也不需要登录 Google 账号。`open -na` 请求新实例，已有日常 Chrome 可继续使用。**Chrome 参数使用 `socks5://`，不是 curl 的 `socks5h://`**；SOCKS5 的目标域名由代理解析，resolver 规则用于限制其他本机 DNS 查询，依据 [Chromium SOCKS 说明](https://www.chromium.org/developers/design-documents/network-stack/socks-proxy/)。本配置无需修改 macOS 系统代理。
+
+在新开的实验 Chrome 打开 `chrome://version`，检查 **Profile Path / 个人资料路径** 位于 `dify-browser-access/chrome-profile` 下，**Command Line / 命令行**包含上述代理参数，然后在该窗口访问 Console。若改变端口或启动参数，先关闭使用这一专用目录的全部 Chrome 实例，再用新参数启动；不要只在已有窗口中开新标签页。此命令只覆盖 macOS，其他 OS 不照搬 `open` 命令。
 
 #### Route 私有 CA：出现证书不可信时
 
@@ -544,7 +559,12 @@ scp "lab-user@${DIFY_JUMP_HOST}:dify-browser-access/route-ca.crt" \
 openssl x509 -in "$HOME/dify-browser-access/route-ca.crt" -noout -fingerprint -sha256
 ```
 
-两侧指纹一致后，在专用 Firefox 配置文件的 **设置 → 隐私与安全 → 证书 → 查看证书 → 证书颁发机构 → 导入** 中选择该文件，按实验用途确认信任其标识网站，再刷新 Console 页面。客户遵从自己的证书信任流程。无需关闭 TLS 验证或修改系统全局证书库。
+两侧指纹一致后，按使用的浏览器配置证书信任：
+
+- **Firefox：**在专用配置文件的 **设置 → 隐私与安全 → 证书 → 查看证书 → 证书颁发机构 → 导入** 中选择该文件，按实验用途确认信任其标识网站，再刷新 Console 页面；此路径不需要修改系统证书库。
+- **macOS Chrome：**若已信任当前 Route CA，可直接访问；若显示 `NET::ERR_CERT_AUTHORITY_INVALID`，按客户/设备管理规范在 **钥匙串访问（Keychain Access）→ 登录（login）** 导入 `$HOME/dify-browser-access/route-ca.crt`。双击导入的 CA，再次比对 SHA256 指纹，展开 **信任（Trust）**，将 **安全套接字层（SSL）** 设为 **始终信任（Always Trust）**，保存时由你在系统提示中认证。关闭并重新启动实验 Chrome，再访问真实 HTTPS 域名。操作说明见 [Apple 证书信任指南](https://support.apple.com/guide/keychain-access/change-the-trust-settings-of-a-certificate-kyca11871/mac)，Chrome 对本地证书信任的处理见 [Chromium Root Store FAQ](https://chromium.googlesource.com/chromium/src/+/main/net/data/ssl/chrome_root_store/faq.md)。
+
+**Chrome 的独立目录不隔离 macOS 钥匙串信任。** 导入 login 钥匙串的 CA 会影响当前用户使用该信任存储的其他应用；这里不导入系统（System）钥匙串。若设备策略不允许导入，使用已配好信任的 Showroom 桌面。只信任已核对的实验 CA，不使用忽略证书错误的启动参数，也不从证书告警页绕过校验。
 
 #### 验证代理路径与结束使用
 
@@ -558,17 +578,17 @@ curl --noproxy '' --proxy socks5h://127.0.0.1:1080 \
   https://dify-console.apps.disco.lab/apps
 ```
 
-成功标志为 `HTTP 200`，并且专用 Firefox 能显示 Dify 页面（登录、初始化或授权页面均需按现场状态继续处理）；页面可达不代表 License 或业务验收完成。本次环境已实际验证 Jump 直连及本机 SOCKS5/代理 DNS/CA 校验访问，均返回 200；Firefox 页面交互和登录仍需使用者验证。
+成功标志为 `HTTP 200`，并且专用 Firefox 或实验 Chrome 能显示 Dify 页面（登录、初始化或授权页面均需按现场状态继续处理）；页面可达不代表 License 或业务验收完成。本次环境已实际验证 Jump 直连及本机 SOCKS5/代理 DNS/CA 校验访问，均返回 200；Firefox/Chrome 页面交互和登录仍需使用者验证；Chrome 命令已核对官方说明与本机应用位置，未自动启动用户浏览器或更改钥匙串。
 
 | 现象 | 检查位置 |
 |---|---|
-| SSH 提示端口已占用 | 将隧道、Firefox 和 curl 的端口一起改为未占用端口，例如 `1081` |
-| 域名无法解析 | Firefox 是否勾选代理 DNS；是否有绕过 `.lab` 的规则；curl 是否使用 `socks5h` |
+| SSH 提示端口已占用 | 将隧道、所用浏览器和 curl 的端口一起改为未占用端口，例如 `1081` |
+| 域名无法解析 | Firefox 是否勾选代理 DNS，Chrome 的专用窗口是否包含 SOCKS 参数；是否有绕过 `.lab` 的规则；curl 是否使用 `socks5h` |
 | 代理拒绝连接或超时 | 本机隧道终端是否仍在运行；Portal 环境和集群是否启动；是否在本机而不是 Jump 建立监听 |
 | 证书不可信或名称不符 | 核对当前环境的 Route CA、指纹和地址栏域名；不使用 `-k` 或关闭证书验证 |
-| curl 成功但浏览器失败 | 是否在同一个专用 Firefox 配置中设置代理并信任 CA；查看具体证书或页面错误 |
+| curl 成功但浏览器失败 | Firefox 是否使用配置了代理/CA 的专用配置；Chrome 是否使用实验目录及当前 Route CA 信任，`chrome://version` 参数是否正确 |
 
-结束时先退出专用 Firefox 配置（或恢复该配置原代理设置），再在隧道终端按 `Ctrl+C`。若环境销毁后不再需要该 CA，可在专用配置中移除其信任。操作不更改集群安装、Podman 服务或业务数据；已制好的介质无需更新。旧介质内文档不会自动变化，本节更新以在线指南为准，新制介质会随 Quick Start 一同携带本节。
+结束时先退出专用 Firefox 配置（或恢复该配置原代理设置）/关闭实验 Chrome，再在隧道终端按 `Ctrl+C`。若环境销毁后不再需要该 CA，Firefox 在专用配置中移除其信任；macOS Chrome 在 login 钥匙串按已记录的指纹定位，只删除本次导入的实验 CA 或恢复其先前信任设置。日常 Chrome 的代理设置未改动；再次测试时重新运行隧道和实验 Chrome 启动命令。操作不更改集群安装、Podman 服务或业务数据；已制好的介质无需更新。旧介质内文档不会自动变化，本节更新以在线指南为准，新制介质会随 Quick Start 一同携带本节。
 
 ## 6. 清理后重新验证安装
 
