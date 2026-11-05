@@ -1,5 +1,7 @@
 # 客户离线安装的原生 Ansible 实现
 
+面向 Dify 同事编写客户手工离线安装手册的架构、步骤对照、交付物和验证关卡见 [源码仓库中的离线技术移交](https://github.com/SammZhu/dify-enterprise-openshift/blob/main/docs/disconnected-handover.md)（随完整源码提供，不是客户包内的现成手工安装入口）。
+
 客户交付是主线：[Quick Start](customer-quickstart.md) 使用 `customer-prepare.yml`、`customer-install.yml` 和 `customer-reset.yml`。这三个入口直接执行 `ansible/roles/dify_offline/tasks/` 的 YAML 任务；不调用自定义 Python 模块、Python 全流程脚本或 Shell 安装器。
 
 RHDP 的 `dify.yml` 只发现验证环境的参数、传输介质和配置 AWS 私网访问，然后调用同一个客户 Role。客户任务不读取 RHDP 身份文件、不要求 AWS CLI、不创建 OpenShift，也不修改客户防火墙。RHDP 集群创建仍由独立仓库维护。

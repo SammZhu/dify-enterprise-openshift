@@ -1,5 +1,7 @@
 # Environment handover
 
+> Historical **online GitOps** environment handover. Dates, accounts and service endpoints below describe that environment, not the current offline installation. For the Dify team preparing a customer manual for disconnected deployments, use the separate [offline engineering handover](disconnected-handover.md).
+
 An OpenShift cluster with Dify Enterprise and every dependency running and
 verified. Since 2026-09-26 Dify itself is installed by ArgoCD from Red Hat's
 certified chart, like everything else here — **change it in Git, not with
