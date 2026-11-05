@@ -437,6 +437,45 @@ cd "$DIFY_MEDIA_DIR/bundle/ansible"
 
 验收包括 Pod Ready、内部镜像引用、四个 PostgreSQL 数据库、Redis、TLS S3 和 HTTPS 入口；**未提供离线 License 时不代表 Enterprise 激活成功，也不代表文件上传、插件、模型调用或 RAG 已验收**。完整业务检查项见[验收清单](disconnected-validation.md)。本单机拓扑没有高可用能力。
 
+### 5.1 已部署完成，更新验收代码后单独复验
+
+若旧介质在 `Query PostgreSQL databases using container credential environment` 失败，先确认诊断原因。旧版本 SQL 引号转义可能让 `psql` 把查询拆成多个参数；这不是缺少数据库或密码错误的通用解决方法。修复版任务使用 YAML 参数列表和独立 Shell 字符串，SQL 作为单个参数传递，凭证仍只从容器环境读取。
+
+**不要修改已封存 bundle 中的任务、重算其校验文件、清理数据或重新制作大介质。** 将已审核的修复版完整源码另行搬到离线机，在介质目录之外运行其客户入口，并继续使用第 4 步原 `install.yml`。源码只更新验收实现，原介质仍须通过其完整校验。若是应用部署本身失败，应先修复部署，不能用只运行 `check` 跳过未完成阶段。
+
+**RHDP：本节修复合并到 `main` 后，在 Jump 的 `lab-user` shell 获取并搬运操作源码**（已有文件时用新文件名，避免覆盖其他正在使用的源码）：
+
+```bash
+curl -fL --retry 3 \
+  https://github.com/SammZhu/dify-enterprise-openshift/archive/refs/heads/main.tar.gz \
+  -o /mnt/low-side-data/dify-acceptance-source.tar.gz &&
+scp /mnt/low-side-data/dify-acceptance-source.tar.gz \
+  highside:/mnt/high-side-data/dify-acceptance-source.tar.gz
+```
+
+**随后在 Highside 的 root shell 执行**，先按第 3.1 节重新设置 RHDP 四个路径变量。下面新建独立的修复源码目录；如目录已存在应先确认其版本，或选择另一个尚不存在的目录，不要覆盖混合版本：
+
+```bash
+export DIFY_REPAIR_SOURCE_DIR=/mnt/high-side-data/dify-acceptance-source-pgsql
+test ! -e "$DIFY_REPAIR_SOURCE_DIR" &&
+  install -d -m 0700 "$DIFY_REPAIR_SOURCE_DIR" &&
+  tar -xzf /mnt/high-side-data/dify-acceptance-source.tar.gz \
+    -C "$DIFY_REPAIR_SOURCE_DIR" --strip-components=1
+```
+
+解包成功后，核对原 `install.yml` 的 `customer_bundle_dir` 仍为本次介质、`customer_state_root` 仍为原状态目录，然后单独重跑验收：
+
+```bash
+cd "$DIFY_REPAIR_SOURCE_DIR/ansible"
+"$DIFY_CONTROLLER_DIR/bin/ansible-playbook" -i localhost, customer-install.yml \
+  -e "@$DIFY_PRIVATE_DIR/install.yml" \
+  -e '{"customer_install_stages":["preflight","verify","check"]}'
+```
+
+完全离线客户通过批准的交付渠道搬运同一修复源码，选择自己的独立源码目录和第 3.1 节客户路径；不需要离线机访问 GitHub、安装 Git 或联网安装 pip 包。此流程只重做前置检查、介质校验及验收，不重跑服务、镜像导入或 Helm 安装；验收会短暂创建 S3 测试 Job/对象，并在结束时清理。
+
+成功标志仍是第 5 步的 `failed=0` 和本次生成的 `deployment-ready.json`。修复后新制作的介质已携带新版任务，正常按第 3～5 步操作，不需要本节的额外源码目录。
+
 ## 6. 清理后重新验证安装
 
 使用新增的 `customer-reset.yml`，操作步骤见 [清理与重装指南](disconnected-reset.md)。默认只读取现场计划，执行需指定模式、启用执行并提供预览确认 hash：
@@ -448,6 +487,6 @@ cd "$DIFY_MEDIA_DIR/bundle/ansible"
 
 ## 当前验证边界
 
-原 Python 实现的三服务部署、重启和清理曾在 RHDP OpenShift 4.20.8 验证，详见 [历史 RHDP 记录](rhdp-dify-offline.md)。本次原生 Ansible 重构的现场全链路重装尚未完成，不能沿用旧实现的现场结论。4.21、arm64、外部对象存储和客户全新环境也尚无本次重构的现场通过记录。
+2026-11-05 已在 RHDP OpenShift 4.20.8 使用客户原生入口完成制包、部署，并在修复 PostgreSQL 验收命令后定向复验通过，详见 [本次现场记录](rhdp-dify-offline.md#2026-11-05客户原生入口现场验证)。原 `native-002` 介质未修改，修复代码从独立源码目录运行；这不是修复版重新制包后一次不中断的完整安装记录。当前原生实现的重启恢复、清理后再重装、RHDP 适配入口全流程，以及 4.21、arm64、外部对象存储和客户全新环境仍需分别验证。旧实现的历史部署、重启和清理记录不能替代这些验证。
 
 本地回归执行真实 YAML 任务，涵盖真实 3.9.8 Chart 渲染、派生 Chart/hooks、运行时镜像映射、OCI 摘要、封包与校验、客户安装入口、清理执行/续跑/UID 竞争及共享目录保护。Kubernetes、Podman、systemd 和云边界采用受控模拟；这些测试不等于真实 RHEL 软件包事务、容器启动、云资源创建或客户现场完整安装。License 激活、插件、模型调用和 RAG 需要另外验收。

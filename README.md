@@ -12,8 +12,11 @@ is one deployment scenario; Demo cluster provisioning is maintained separately i
 
 Version coverage is recorded per workflow and expands as additional versions are
 adapted and validated. The current offline profile targets Dify Enterprise 3.9.8
-and OpenShift 4.20/4.21. Deployment/restart records for OpenShift 4.20.8
-belong to the previous implementation; the native YAML rewrite still needs a full field run. See the [offline validation scope](docs/customer-quickstart.md#当前验证边界)
+and OpenShift 4.20/4.21. The native customer workflow was exercised on RHDP
+OpenShift 4.20.8: media preparation and deployment completed, then a PostgreSQL
+acceptance quoting fix passed a targeted acceptance rerun. This was not an
+uninterrupted run from newly prepared fixed media; restart and native reset
+verification remain outstanding. See the [field record](docs/rhdp-dify-offline.md#2026-11-05客户原生入口现场验证) and [offline validation scope](docs/customer-quickstart.md#当前验证边界)
 before treating a version or customer topology as validated.
 
 **Online GitOps demonstration status: verified end to end.** All 16 Dify components run, plugins build
@@ -111,7 +114,7 @@ Start with the [customer Quick Start (Chinese)](docs/customer-quickstart.md). It
 
 Reset/reinstall uses [customer-reset.yml](docs/disconnected-reset.md). External S3/ODF and arm64 use the same Role's [advanced configuration](docs/disconnected-manual.md), with their field-validation limits stated explicitly. The [acceptance checklist](docs/disconnected-validation.md) covers deployment and the separate License, plugin, model and RAG checks.
 
-RHDP is a validation adapter: [dify.yml](docs/rhdp-dify-offline.md) discovers Workshop inputs, transfers the same customer media and invokes that Role. Demo cluster provisioning remains in private [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation). Historical OpenShift 4.20.8 deployment/restart results belong to the previous implementation; the native rewrite still needs a complete field run. The online GitOps demonstration below is a separate workflow.
+RHDP is a validation adapter: [dify.yml](docs/rhdp-dify-offline.md) discovers Workshop inputs, transfers the same customer media and invokes that Role. Demo cluster provisioning remains in private [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation). The [2026-11-05 field record](docs/rhdp-dify-offline.md#2026-11-05客户原生入口现场验证) covers the native customer entry points and a targeted acceptance repair; it does not validate a new full run of the RHDP adapter, cluster provisioning, restart or native reset. The online GitOps demonstration below is a separate workflow.
 
 ### Online Demo / GitOps
 

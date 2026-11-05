@@ -2,7 +2,7 @@
 
 入口是 `ansible/dify.yml`，在 **OpenShift Disconnected Workshop 的 Jump** 上执行。集群创建独立维护于私有仓库 [rhdp-demo-automation](https://github.com/SammZhu/rhdp-demo-automation)，本工程不再包含集群创建入口。客户安装是主线，操作从 [客户 Quick Start](customer-quickstart.md) 开始；本 RHDP 入口适配同一个客户 Role，扩展参数见 [高级配置](disconnected-manual.md)。
 
-**本次原生 YAML 重构尚未在 RHDP 完整重装验收。** 2026-11-02 的真实部署属于旧实现的历史记录，范围见文末。本次本地测试采用受控集群/容器边界；现场仍需重新制作介质、安装及验收，License、插件、模型和 RAG 也需单独验证。
+**2026-11-05 已使用客户原生入口在 RHDP 完成制包、部署及修复后的定向验收**，见下方现场记录。这不代表 `dify.yml` 适配入口、原生清理/重启恢复或修复版新介质的一次完整运行已验证。2026-11-02 的真实部署属于旧实现历史记录，范围见文末。License、插件、模型和 RAG 仍需单独验证。
 
 ## 使用 Ansible
 
@@ -103,7 +103,20 @@ sudo systemctl disable --now dify-offline-services.service
 
 `check` 会等待运行 Pod Ready，排除已经完成的凭证生成 Job；最终检查仍会拒绝失败 Pod，不因等待过滤而忽略实际失败。没有运行 services 的验收只检查当前状态，不会暗中启动容器。
 
-## 实测记录
+## 2026-11-05：客户原生入口现场验证
+
+本次按客户 Quick Start，联网 Jump 运行 `customer-prepare.yml`，Highside 使用包内 `customer-install.yml`。环境为现有 `disco.lab` 单节点 OpenShift 4.20.8 / Linux amd64、gp3-csi、本地 S3；没有使用 `dify.yml` 重新创建集群或编排本次安装。
+
+- 制包 `native-002` 成功：`ok=613 changed=103 failed=0`；搬运的 7.3 GiB 归档 SHA256 校验通过。Highside 通过主机前置 Playbook 安装 OS 软件，然后使用介质内 wheels 离线安装 Ansible 2.20.10 / Python 3.12.15。OS 源为 RHDP 已配置 RHUI，不作为物理隔离 OS 安装证明。
+- 复用此前已清理的状态目录；本次原生任务完成三个 Podman 服务、29 个镜像导入、数据层及 Helm 部署。16 个应用 Pod 和 3 个数据层 Pod Ready；三个 PVC 为 gp3-csi / Bound，容量分别为 PostgreSQL 30 GiB、Redis 5 GiB、Qdrant 30 GiB。
+- 首轮在 PostgreSQL 验收失败：SQL 引号转义在 Ansible 实际 argv 中保留反斜杠，使 `psql` 收到额外参数。只读查询确认四个应用数据库存在；不是密码认证失败或数据库缺失。
+- 使用修复提交 `d4c0ef0` 的独立源码入口重跑 `[preflight, verify, check]`，保持原 `native-002/bundle` 不变：`ok=165 changed=10 failed=0 rescued=0`。未重跑服务、镜像导入或 Helm 部署。
+- 验收通过 Pod Ready/内网 digest 镜像检查、四个数据库、Redis PONG、集群内认证 TLS S3 写入/读取比对/删除。S3 探针 Job 已清理；仅保留成功的凭证生成 Job。
+- App、Console、Enterprise、Upload、API HTTPS 入口均返回 200；Trigger 根路径返回 404，触发业务未验证。`deployment-ready.json` 权限为 0600，独占租约已释放。私有参数、凭证、报告及原始日志保留在环境中，不提交仓库。
+
+本记录证明客户入口在上述环境完成部署并经过修复后的验收，不是修复版介质从头一次通过、原生清理/重启恢复或 RHDP 适配全流程的证明。License 激活、业务上传、插件、模型和 RAG 尚未验收。已封存旧介质的修复复验步骤见 [Quick Start 第 5.1 节](customer-quickstart.md#51-已部署完成更新验收代码后单独复验)。
+
+## 历史实测记录
 
 以下为重构前实现的历史现场记录。本次原生化必须另行运行客户链路验证，不能直接沿用历史成功结论。
 
