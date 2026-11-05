@@ -25,8 +25,19 @@
 
 - name: Query PostgreSQL databases using container credential environment
   ansible.builtin.command:
-    argv: >-
-      {{ dify_oc + ['exec', 'dify-postgresql-0', '-n', 'dify', '--', 'bash', '-ec', 'PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRESQL_USER" -d postgres -Atc \'SELECT datname FROM pg_database\''] }}
+    argv: "{{ dify_oc + dify_database_query_argv }}"
+  vars:
+    dify_database_query_argv:
+      - exec
+      - dify-postgresql-0
+      - -n
+      - dify
+      - --
+      - bash
+      - -ec
+      - >-
+        PGPASSWORD="$POSTGRESQL_PASSWORD" psql -h 127.0.0.1
+        -U "$POSTGRESQL_USER" -d postgres -Atc "SELECT datname FROM pg_database"
   register: dify_accept_databases
   changed_when: false
   no_log: true
