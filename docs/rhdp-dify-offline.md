@@ -115,6 +115,7 @@ sudo systemctl disable --now dify-offline-services.service
 - 使用修复提交 `d4c0ef0` 的独立源码入口重跑 `[preflight, verify, check]`，保持原 `native-002/bundle` 不变：`ok=165 changed=10 failed=0 rescued=0`。未重跑服务、镜像导入或 Helm 部署。
 - 验收通过 Pod Ready/内网 digest 镜像检查、四个数据库、Redis PONG、集群内认证 TLS S3 写入/读取比对/删除。S3 探针 Job 已清理；仅保留成功的凭证生成 Job。
 - App、Console、Enterprise、Upload、API HTTPS 入口均返回 200；Trigger 根路径返回 404，触发业务未验证。`deployment-ready.json` 权限为 0600，独占租约已释放。私有参数、凭证、报告及原始日志保留在环境中，不提交仓库。
+- 浏览器访问：Jump 直连及本机经 Jump 的 SOCKS5/代理 DNS/CA 校验 curl 均返回 200。用户在本机 macOS Chrome 使用 Quick Start 第 5.2 节简化启动参数、新独立配置目录后确认 Console 页面加载成功；原组合曾报 `ERR_INTERNET_DISCONNECTED`。未对参数与配置目录变化做单因素归因，未验证页面登录或业务操作。
 
 本记录证明客户入口在上述环境完成部署并经过修复后的验收，不是修复版介质从头一次通过、原生清理/重启恢复或 RHDP 适配全流程的证明。License 激活、业务上传、插件、模型和 RAG 尚未验收。已封存旧介质的修复复验步骤见 [Quick Start 第 5.1 节](customer-quickstart.md#51-已部署完成更新验收代码后单独复验)。
 
