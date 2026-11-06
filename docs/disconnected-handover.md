@@ -40,7 +40,7 @@ Registry 保存平台镜像及插件构建镜像；wheel 索引保存插件 Pyth
 
 三个 PostgreSQL/Redis/Qdrant PVC 默认是 **30/5/30 GiB**。预留镜像、容器层、Registry、S3及备份空间；建议 Podman 主机数据盘至少60 GiB并按实际使用扩容，不以压缩包大小计算运行空间。客户提供稳定内网 DNS、StorageClass、cluster-admin kubeconfig及网络通道：节点/Pod可访问主机5000/9443/9444，运维端可访问集群6443及Route443。
 
-**只在空白验证目标初装。** 手工操作期间不并行运行本篇或自动安装入口；本篇不创建自动安装器的独占租约。 不对正在使用的在线 GitOps或自动离线安装执行本篇；同名namespace、容器、Helm release存在时停止，不接管或删除。客户端未安装的功能、License、插件和模型不因Pod Ready就自动可用。
+**只在空白验证目标初装。** 手工安装期间，请勿在同一环境中同时运行其他安装或清理任务，避免相互干扰。不对正在使用的在线 GitOps或自动离线安装执行本篇；同名namespace、容器、Helm release存在时停止，不接管或删除。客户端未安装的功能、License、插件和模型不因Pod Ready就自动可用。
 
 ## 2. 准备文件、工具和操作终端
 
