@@ -351,7 +351,7 @@ cp "$STATE/htpasswd" "$STATE/auth/htpasswd"
 # 生成目标 Registry auth.json：键为主机:端口，auth 为 offline:密码的 base64。
 jq -n --arg registry "$REGISTRY" --rawfile password "$WORK/keys/registry-password" \
   '{auths:{($registry):{auth:(("offline:"+($password|rtrimstr("\n")))|@base64)}}}' > "$STATE/auth.json"
-# 生成 S3 身份；下面保存 JSON 和容器 env 文件，集群 Secret 复用同一组值。
+# 生成对象存储访问账号和密钥，保存到私有 JSON 和环境变量文件；第 7.2 节从 JSON 取出这两个值供集群应用使用。
 openssl rand -hex 12 > "$WORK/keys/s3-access"
 openssl rand -hex 32 > "$WORK/keys/s3-secret"
 jq -n --arg bucket "$BUCKET" --rawfile access "$WORK/keys/s3-access" --rawfile secret "$WORK/keys/s3-secret" \
@@ -364,7 +364,33 @@ jq -r '["AWS_ACCESS_KEY_ID=" + .accessKey, "AWS_SECRET_ACCESS_KEY=" + .secretKey
 chmod 0600 "$STATE"/*.json "$STATE"/*.env "$STATE/htpasswd" "$STATE"/certificates/* "$STATE"/tls/* "$STATE"/auth/*
 ```
 
-认证只写入私有文件；不能输出auth.json给同事看，也不能将源拉取authfile当作本地Registry凭证。上面的密码不出现在argv中。`local-s3.json`之后会原样转成集群S3 Secret。
+### 4.5 这些密码文件分别给谁使用
+
+执行上面的命令后，主机上会生成两套不同用途的登录信息：一套用于本地镜像仓库，另一套用于本地对象存储。它们不是同一个账号，也不能互相替换。
+
+**本地镜像仓库：服务端检查密码，客户端提供账号和密码。**
+
+1. 本节生成一个名为 `offline` 的仓库账号和随机密码。`$STATE/htpasswd` 保存该密码的 bcrypt 校验结果，并复制到 `$STATE/auth/htpasswd`。第 5 节启动 Registry 容器时，会将后一个文件挂载到容器内的 `/auth/htpasswd`；仓库服务读取它，用来判断登录请求中的密码是否正确。
+2. `$STATE/auth.json` 是给访问仓库的客户端使用的登录文件。它记录本地仓库的“域名:端口”，以及 `offline` 账号和密码合成后的 base64 文本。base64 可以解码恢复内容，所以这个文件仍然包含可使用的登录凭证，不是可以公开分享的普通配置。
+3. 第 6 节的 `podman push --authfile` 读取这个登录文件，将镜像推送到本地仓库。第 7.2 节又把这个文件的内容写入 OpenShift 的 `offline-registry-pull` 和 `image-repo-secret` 两个 Secret，分别供工作负载拉取镜像、插件构建流程访问仓库使用。Registry 服务端本身读取的是 htpasswd 文件，不是这个 auth.json。
+
+联网制作机还有一份**源镜像仓库的登录文件**，用于从 Docker Hub、Quay 等原始仓库下载镜像。它记录的是源仓库的地址和源仓库账号；这里新生成的 auth.json 记录的是客户本地仓库的地址和本地账号。两者服务对象不同，即使都采用 JSON 格式，也不能直接互换。
+
+**本地对象存储：主机服务和集群应用使用相同的访问账号及密钥。**
+
+`$STATE/local-s3.json` 保存 `bucket`、`accessKey`、`secretKey` 三个字段。bucket 是本次使用的存储空间名称；accessKey 是访问账号标识，secretKey 是与它配套的访问密钥。后续有两条读取路径：
+
+| 文件中的字段 | 第 4～5 节：交给本机 SeaweedFS 服务 | 第 7.2 节：交给 OpenShift 中的 Dify |
+|---|---|---|
+| `accessKey` | 写入 `$STATE/local-s3.env` 的 `AWS_ACCESS_KEY_ID`，启动容器时通过 `--env-file` 读取 | 提取为私有文件，再写入 `dify-local-s3` Secret 的 `accessKey` 字段 |
+| `secretKey` | 写入同一环境变量文件的 `AWS_SECRET_ACCESS_KEY` | 提取为私有文件，再写入同一 Secret 的 `secretKey` 字段 |
+| `bucket` | 写入同一环境变量文件的 `S3_BUCKET` | 不写入该 Secret；第 9 节应用配置使用第 3 节取得的同一 bucket 名称 |
+
+因此，**不是把整个 local-s3.json 文件原样转换成一个 Secret**。第 7.2 节只取其中两个认证字段；第 9 节生成应用配置时再读取该 Secret，让 Dify 用与 SeaweedFS 服务相同的凭证访问对象存储。两侧的值不同，就会出现服务正在运行但应用认证失败的情况。
+
+**这些文件的保存和查看方式。** 上述文件保存在 STATE 指定的私有目录中。例如 WORK 为 `/var/lib/dify-manual`，则本地仓库登录文件位于 `/var/lib/dify-manual/state/auth.json`，对象存储登录文件位于 `/var/lib/dify-manual/state/local-s3.json`。按前面的设置限制目录和文件权限，不将文件内容直接贴到聊天、邮件、截图或公开文档中；同事理解流程只需要文件用途和字段名，不需要真实密码。
+
+生成仓库密码时，密码先保存在 `$WORK/keys/registry-password`，`htpasswd` 命令从这个文件接收标准输入，生成密码校验结果；生成 auth.json 的 `jq` 命令也从文件读取密码。第 6 节 `podman push` 的 `--authfile` 参数指定登录文件的路径，第 7.2 节 `oc create secret` 的 `--from-file` 参数也指定文件路径，不把真实密码拼成你在终端输入的命令。这样可以避免这些命令把真实密码写入命令历史或直接显示在参数列表中；文件本身仍含敏感内容，仍需按前面的权限保存。
 
 ## 5. 手工加载服务镜像并启动三个容器
 
@@ -429,7 +455,7 @@ podman --cgroup-manager=cgroupfs create --name dify-offline-pypi --pull=never \
 # 按 S3 → Registry → nginx 顺序启动，再查看容器状态。
 podman --cgroup-manager=cgroupfs start dify-offline-s3 dify-offline-registry dify-offline-pypi
 podman --cgroup-manager=cgroupfs ps
-# 将 Basic 认证头写入私有文件，curl 读取该文件，避免密码出现在 argv。
+# 将带有仓库登录信息的 HTTP 认证头写入私有文件；curl 从文件读取，不把真实认证内容写进命令参数。
 jq -r --arg registry "$REGISTRY" '.auths[$registry].auth | "Authorization: Basic "+.' \
   "$STATE/auth.json" > "$WORK/registry-header"
 # 验证 Registry 认证与 TLS；下一项验证 wheel 索引，最后一项应返回匿名 S3 的 403。
